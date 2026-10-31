@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>ChaoxingDesktop</RootNamespace>
+    <Version>0.4.2</Version>
+    <Product>ChaoxingDesktop</Product>
+    <Description>超星 Windows 桌面版</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../assets/app.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefaultItemExcludes>$(DefaultItemExcludes);dev*/**;publish*/**</DefaultItemExcludes>
+    <RestorePackagesPath>../build/nuget</RestorePackagesPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Remove="dev*/**;publish*/**" />
+    <None Remove="dev*/**;publish*/**" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <Content Include="../assets/app.ico" Link="app.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!-- SDK-style unpackaged publish must carry the compiled XAML resources. -->
+  <Target Name="PublishCompiledXaml" AfterTargets="Publish">
+    <ItemGroup>
+      <NativeXamlResource Include="$(OutputPath)App.xbf;$(OutputPath)MainWindow.xbf;$(OutputPath)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeXamlResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

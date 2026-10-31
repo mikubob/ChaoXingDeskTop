@@ -1,4 +1,4 @@
-# Build two launchers sharing dependencies; the worker needs redirected stdio.
+# Archived Python GUI specification; native builds use WinUIBackend.spec.
 from pathlib import Path
 import sys
 from importlib.metadata import distributions

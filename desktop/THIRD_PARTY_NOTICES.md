@@ -72,3 +72,10 @@ QML 学习工作台使用既有 PySide6 分发的 Qt Quick / Qt Quick Controls�
 Web 调研参考 shadcn/ui、shadcn-admin、Tabler，QML 调研参考 zhuzichu520/FluentUI；本轮没有复制这些第三方模板源码，也没有引入第三方 FluentUI / Pro 模块。布局、页面及状态桥代码在本仓库中实现。
 
 2026-10-15 发布前清理：移除旧 Widgets 界面及其专用组件 / 验收入口，将配置持久化回归测试迁移到 QML 后端。改编的平台适配层移除未使用的签到接口、状态枚举、异常类、通知工厂和字体辅助方法；通知、媒体、验证码和字体映射资源保留。源码包使用明确的源码 / 资源范围，避免收集本机配置及临时文件。
+# 原生界面迁移补充
+
+源码默认界面采用 Microsoft Windows App SDK / WinUI 3（MIT）及 .NET 8（MIT），自包含发布时包含相应运行组件。项目固定引用 Windows App SDK `1.8.260921001` 与 Windows SDK BuildTools `10.0.26100.4654`；Windows SDK 构建工具遵循微软随包许可。Python 后台继续使用本文件所述依赖，Qt Core 用于进程、事件循环和模型；原 QML 界面仅保留作兼容参考。
+
+- [Windows App SDK 许可证](https://github.com/microsoft/WindowsAppSDK/blob/main/LICENSE)
+- [WinUI 许可证](https://github.com/microsoft/microsoft-ui-xaml/blob/main/LICENSE)
+- [.NET 运行时许可证](https://github.com/dotnet/runtime/blob/main/LICENSE.TXT)

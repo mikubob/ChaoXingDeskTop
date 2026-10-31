@@ -2,7 +2,11 @@
 
 面向 Windows 的超星课程学习工作台，用一个桌面窗口管理账号、课程、章节任务、题库与 AI 服务，以及逐题结果和日志。
 
-**当前版本：0.4.2** · **Windows 10 / 11 x64** · **Python + PySide6 / QML** · **GPL-3.0**
+**当前版本：0.4.2** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
+
+源码默认界面已迁移到原生 **WinUI 3（C# / Windows App SDK）**，保留五页侧栏、账号面板、课程列表、设置分组及任务／日志区布局。账号、配置、凭据保护和任务协议继续使用原 Python 后台；Qt Core 保留用于后台进程和模型，不创建 QML 界面。现有下载链接仍指向此前发布的 0.4.2 安装包，源码改动不会自动更新这些附件。
+
+开发运行：准备 Python 环境及 .NET 8 SDK，然后在 `desktop` 中运行 `./scripts/build-winui.ps1`、`.venv/Scripts/python.exe run.py`。详见 [WinUI 3 运行与构建](desktop/winui/README.md)。
 
 [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.4.2/ChaoxingDesktop-0.4.2-Setup-win-x64.exe) · [发行说明](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.4.2) · [使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
 

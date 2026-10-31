@@ -4,8 +4,14 @@ if __name__ == "__main__":
     if "--worker" in sys.argv:
         from chaoxing_desktop.worker import main
         raise SystemExit(main())
+    if "--bridge" in sys.argv:
+        from chaoxing_desktop.winui_bridge import main
+        raise SystemExit(main())
     try:
-        from chaoxing_desktop.qml_app import main
+        if "--legacy-qml" in sys.argv:
+            from chaoxing_desktop.qml_app import main
+        else:   
+            from chaoxing_desktop.winui_app import main
         raise SystemExit(main())
     except Exception as exc:
         # Windowed PyInstaller otherwise opens a blocking traceback dialog,

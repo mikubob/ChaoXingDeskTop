@@ -44,6 +44,8 @@ class SourceBundleTests(unittest.TestCase):
             "dist/app.py", ".ruff_cache/data.py", "chaoxing_desktop/settings.ini",
             "chaoxing_desktop/__pycache__/config.py", "scripts/token.key",
             "tests/live-response.json", "assets/private.pem",
+            "winui/bin/MainWindow.xaml", "winui/obj/Generated.cs", "winui/publish/App.xaml",
+            "winui/publish-motion/Generated.cs",
             "vendor/chaoxing/resource/credentials.json",
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -63,6 +65,7 @@ class SourceBundleTests(unittest.TestCase):
             "chaoxing_desktop/qml/Main.qml", "chaoxing_desktop/qml_selftest.py",
             "chaoxing_desktop/worker.py", "vendor/chaoxing/api/captcha.py",
             "vendor/chaoxing/resource/font_map_table.json", "LICENSE",
+            "backend.py", "WinUIBackend.spec", "winui/MainWindow.xaml", "winui/ChaoxingDesktop.csproj",
         }.issubset(names))
         self.assertFalse({"chaoxing_desktop/gui.py", "tests/gui_smoke.py"} & names)
 

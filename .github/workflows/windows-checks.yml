@@ -15,6 +15,9 @@ jobs:
         with:
           python-version: '3.13.9'
           architecture: x64
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
       - name: Install locked dependencies in an isolated environment
         shell: pwsh
         working-directory: desktop
@@ -26,6 +29,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Dependency verification failed' }
           .venv-ci/Scripts/python.exe -m pip check
           if ($LASTEXITCODE -ne 0) { throw 'Dependency conflicts' }
+      - name: Build native WinUI 3 frontend
+        shell: pwsh
+        working-directory: desktop
+        run: ./scripts/build-winui.ps1 -Python .venv-ci/Scripts/python.exe -SkipTests -SkipGuiSmoke
       - name: Unit and protocol regressions (no credentials or external services)
         shell: pwsh
         working-directory: desktop
