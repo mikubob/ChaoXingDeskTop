@@ -1,4 +1,4 @@
-"""Cached course statistics remain responsive and isolated from execution."""
+"""Cached course statistics and completed-course startup behavior."""
 import io
 import json
 import os
@@ -211,6 +211,7 @@ class CourseProgressTests(unittest.TestCase):
         events = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual([e for e in events if e['type'] == 'course_progress'][0]['completed'], 1)
         self.assertEqual(cookie.read_bytes(), b'fixture-cookie')
+
 
 
 if __name__ == '__main__':

@@ -40,6 +40,8 @@ SCHEMA = {
                   depends=dict(section='common', key='notopen_action', value='retry', reason='选择重试未开放章节后生效')),
         ]),
         group("章节检测与学习次数", "仅允许一次作答的课程请保持重做关闭。", [
+            field("忽略完成缓存重新检查", "common", "ignore_completion_cache", "bool",
+                  hint="默认关闭。开启后按平台状态重新检查所选任务，不跳过本地已完成项；检查结果更新完成缓存。关闭后恢复缓存续跑。"),
             field("答错后允许重做", "common", "work_redo_enabled", "bool"),
             field("最多重做次数", "common", "work_max_retries", "integer", 0, 20,
                   depends=dict(section='common', key='work_redo_enabled', value='true', reason='开启答错后允许重做后生效')),

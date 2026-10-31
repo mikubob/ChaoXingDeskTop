@@ -760,6 +760,7 @@ class Backend(QObject):
         lines = [f"账号：{'离线示例' if self.demo_mode else row['label'] if row else '未选择'}",
                  f"课程：已选 {len(self.selected)} 门（搜索隐藏 {self.summary['hiddenCount']} 门）",
                  f"章节并发 {c['common']['jobs']} · 倍速 {c['common']['speed']} · 重做 {'开启，最多 ' + c['common']['work_max_retries'] + ' 次' if on('common', 'work_redo_enabled') else '关闭'}",
+                 '完成缓存：' + ('忽略缓存，重新检查所选任务' if on('common', 'ignore_completion_cache') else '跳过缓存已完成任务'),
                  '题库顺序：' + (' → '.join(banks) or '关闭'),
                  f"AI {'开启' if on('ai', 'enabled') else '关闭'} · 图片识别 {'开启' if on('ai', 'vision') else '关闭'} · 人工 {'开启' if on('desktop', 'manual_fallback') else '关闭'} · 随机 {'开启' if on('desktop', 'random_fallback') else '关闭'}",
                  'AI 发送目标：' + (self.aiDestination if not self.demo_mode and on('ai', 'enabled') else '不发送'),
@@ -777,7 +778,8 @@ class Backend(QObject):
                 'accounts.json 与 accounts/：账号索引与受保护的会话。DPAPI 绑定 Windows 用户和设备，复制文件不保证跨机解密。\n'
                 'discussions/ 与 activities/：草稿、正文／答案及发布／提交意图。内容未使用凭据加密封装；未决意图用于防重复，不能当缓存删除。\n'
                 'run_summaries/：按账号隔离的最近 20 轮摘要，每账号最多 2 MiB，每轮最多 1000 个未完成章节标题。包含课程名，不含题干或答案；每 2 秒最多保存一次。摘要不能作为提交证据，也不会自动重放请求。\n'
-                'course_progress/：按账号与平台用户隔离的章节进度缓存，每份最多 2000 门课程 / 1 MiB，只含课程标识、章节计数和更新时间。可安全删除，后台只读更新；不作为执行或提交凭据。\n'
+                'course_progress/：按账号与平台用户隔离的课程进度统计，每份最多 2000 门课程 / 1 MiB，只含课程标识、章节计数和更新时间。可安全删除，读课时后台只读更新。\n'
+                'task_completion/：已核验完成的章节任务缓存，按账号、用户、课程和班级隔离，每门课程最多 10000 项 / 4 MiB，保存章节 ID、标题和确认时间。下次启动直接跳过对应任务的处理与逐章核验，可安全删除，不作为讨论／活动提交凭据。\n'
                 'draft_copies/：按账号隔离的人工编辑副本，最多 20 项 / 2 MiB，含正文和原题，未加密。与生产草稿／意图独立，不能作为提交证据。\n'
                 'ai_profiles.json：最多 20 个命名 AI 配置；配置与独立凭据用 DPAPI 加密，不会自动切换服务。完整 INI 不包含这些档案。\n'
                 'logs/（或自选目录）：已脱敏日志，单文件约 10 MiB、总量 100 MiB、保留 14 天。课程与题目内容未自动匿名。日志导出仅含当前保留快照。\n\n'
@@ -1629,7 +1631,7 @@ class Backend(QObject):
                     self.selected = recovery['wanted'] & live
                     missing = len(recovery['wanted'] - live)
                     self.coursesChanged.emit()
-                    self.notify(f'已重新读课并选择 {len(self.selected)} 门可定位课程，另有 {missing} 门未找到。请检查策略后手动开始；新轮会重读平台状态。', 'warning')
+                    self.notify(f'已重新读课并选择 {len(self.selected)} 门可定位课程，另有 {missing} 门未找到。请检查策略后手动开始；新轮将读取章节目录，跳过缓存已完成的任务。', 'warning')
                 else:
                     self.notify('账号身份已变化，未恢复课程选择。请重新读取原账号课程。', 'warning')
         elif kind in ('course_progress', 'course_progress_loading', 'course_progress_failed'):
@@ -1728,7 +1730,7 @@ class Backend(QObject):
             if not saved:
                 self.history_error = error
             self._history_run = ''
-        if code == 0 and self.outcome and self.operation in ('courses', 'run', 'verify') and not self.controller.stopping:
+        if code == 0 and self.outcome and self.operation in ('courses', 'verify') and not self.controller.stopping:
             QTimer.singleShot(0, self.start_course_progress)
         self.changed.emit()
 

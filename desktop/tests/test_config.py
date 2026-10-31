@@ -5,6 +5,17 @@ from chaoxing_desktop.config import (BOOLEAN_KEYS, Redactor, defaults, is_secret
 
 
 class ConfigTests(unittest.TestCase):
+    def test_ignore_completion_cache_is_opt_in_and_round_trips_as_boolean(self):
+        legacy = parse_text('[common]\njobs = 2\n')
+        self.assertFalse(to_payload(legacy)['common']['ignore_completion_cache'])
+        legacy['common']['ignore_completion_cache'] = 'true'
+        restored = parse_text(serialize(legacy))
+        validate(restored)
+        self.assertIs(to_payload(restored)['common']['ignore_completion_cache'], True)
+        restored['common']['ignore_completion_cache'] = 'invalid'
+        with self.assertRaises(ValueError):
+            validate(restored)
+
     def test_import_bom_percent_and_unknown_fields(self):
         c = parse_text("\ufeff[common]\nusername = 测试\n[tiku]\nendpoint = https://example.test/v1?q=50%25\n[custom]\nfuture = preserved\n")
         self.assertEqual(c["common"]["username"], "测试")

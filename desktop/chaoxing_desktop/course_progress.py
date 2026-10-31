@@ -1,4 +1,4 @@
-"""Display-only chapter progress; cached counts never authorize task execution."""
+"""Display-only course progress; task completion has a separate cache."""
 from datetime import datetime, timezone
 import hashlib
 import json

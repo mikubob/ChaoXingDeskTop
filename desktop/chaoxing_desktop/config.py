@@ -22,7 +22,7 @@ NOTIFICATIONS = ("ServerChan", "Qmsg", "Bark", "Telegram")
 SECRET_KEYS = {"password", "tokens", "token", "key", "siliconflow_key", "go_authorization",
                "url", "adapter_url", "tg_chat_id", "http_proxy", "cookies", "cookie"}
 BOOLEAN_KEYS = {
-    "common": ("use_cookies", "work_redo_enabled", "add_learning_count"),
+    "common": ("use_cookies", "work_redo_enabled", "add_learning_count", "ignore_completion_cache"),
     "tiku": ("submit",),
     "ai": ("enabled", "vision", "check_connection"),
     "discussion": ("enabled", "auto_submit"),
@@ -60,7 +60,8 @@ def defaults() -> configparser.ConfigParser:
     config.read_dict({
         "common": dict(username="", password="", use_cookies="false", speed="1.0", jobs="4",
                        notopen_action="retry", retry_interval="1.0", work_redo_enabled="false",
-                       work_max_retries="3", add_learning_count="false", target_count="100"),
+                       work_max_retries="3", add_learning_count="false", target_count="100",
+                       ignore_completion_cache="false"),
         "tiku": dict(provider="", submit="false", cover_rate="1.0", delay="1.0",
                      true_list="正确,对,√,是", false_list="错误,错,×,否,不对,不正确"),
         "question_bank": dict(providers="", yanxi_tokens="", like_tokens="", adapter_url="",
@@ -274,7 +275,7 @@ def to_payload(config: configparser.ConfigParser) -> dict:
         c[key] = float(c[key])
     for key in ("jobs", "work_max_retries", "target_count"):
         c[key] = int(c[key])
-    for key in ("use_cookies", "work_redo_enabled", "add_learning_count"):
+    for key in BOOLEAN_KEYS['common']:
         c[key] = c[key].lower() == "true"
     for key in ("cover_rate", "delay"):
         t[key] = float(t[key])

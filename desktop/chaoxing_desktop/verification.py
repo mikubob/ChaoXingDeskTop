@@ -148,7 +148,7 @@ def verify_records(client, channel, course, target, point, progress=None):
             progress.send('records', f'已复核 {len(seen)} 个本人记录目标；章节 {progress.completed}/{progress.total}，失败 {progress.failures}')
 
 
-def verify_chapters(client, channel, courses, targets, records=False):
+def verify_chapters(client, channel, courses, targets, records=False, completion_cache=None):
     """Re-read the allowlisted chapter endpoint, never infer submission status."""
     identities = {(str(c['courseId']), str(c['clazzId'])): c for c in courses}
     if not targets or len(targets) > 10000:
@@ -194,6 +194,14 @@ def verify_chapters(client, channel, courses, targets, records=False):
             checkpoint(channel)
             point = by_id.get(str(target['pointId']))
             confirmed = point is not None and point.get('has_finished') is True
+            if completion_cache is not None:
+                try:
+                    if confirmed:
+                        completion_cache.save(course, dict(point, title=point.get('title') or str(target['pointId'])))
+                    else:
+                        completion_cache.remove(course, target['pointId'])
+                except (OSError, ValueError) as exc:
+                    channel.send('log', level='WARNING', message=f'无法同步任务完成缓存：{exc}')
             channel.send('verification', id=target['id'], confirmed=confirmed,
                          checked_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),
                          reason='平台已确认章节完成' if confirmed else
