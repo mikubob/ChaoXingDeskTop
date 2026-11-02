@@ -285,13 +285,33 @@ public sealed partial class MainWindow
         Navigation.SelectedIndex = 2;
         await WaitFor(() => !contentAnimations.ContainsKey(PageHost));
         var original = AppWindow.Size;
+        double originalRootWidth = Root.Width;
         double scale = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96d;
         try
         {
             foreach (int width in new[] { 1500, 980, 1500 })
             {
                 AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(width * scale), original.Height));
-                await Task.Delay(200); Root.UpdateLayout();
+                // Hosted desktops can clamp a native window to their small
+                // work area. Exercise the requested logical viewport even in
+                // that case, rather than assuming Resize accepted 1500 DIPs.
+                Root.Width = width;
+                smokeStep = $"responsive width={width}, native={AppWindow.Size.Width}, dpi={scale}";
+                await WaitFor(() =>
+                {
+                    Root.UpdateLayout();
+                    var viewport = VisualChild<ScrollViewer>(pages[2], "ServicesScroll");
+                    var bankPane = VisualChild<ScrollViewer>(pages[2], "BankSettings");
+                    var aiPane = VisualChild<ScrollViewer>(pages[2], "AiSettings");
+                    var columns = VisualChild<Grid>(pages[2], "ServiceColumns");
+                    if (viewport == null || bankPane == null || aiPane == null || columns == null) return false;
+                    bool wide = width != 980;
+                    if (Math.Abs(Root.ActualWidth - width) > 2 || (viewport.ActualWidth > 880) != wide) return false;
+                    var bankPosition = bankPane.TransformToVisual(columns).TransformPoint(new Windows.Foundation.Point());
+                    var aiPosition = aiPane.TransformToVisual(columns).TransformPoint(new Windows.Foundation.Point());
+                    return wide ? aiPosition.X > bankPosition.X && bankPane.ActualHeight <= viewport.ActualHeight + 2
+                        : aiPosition.Y >= bankPosition.Y + bankPane.ActualHeight && viewport.ScrollableHeight > 0;
+                });
                 if (Grid.GetRow(HeaderActions) != 0 || Grid.GetColumn(HeaderActions) != 1)
                     throw new InvalidOperationException("窗口变窄后保存设置移到了标题下方。");
                 var scroll = VisualChild<ScrollViewer>(pages[2], "ServicesScroll")!;
@@ -315,7 +335,7 @@ public sealed partial class MainWindow
                     throw new InvalidOperationException("宽窗口没有恢复为左右并排布局。");
             }
         }
-        finally { AppWindow.Resize(original); }
+        finally { Root.Width = originalRootWidth; AppWindow.Resize(original); smokeStep = "responsive complete"; }
     }
 
     private async Task CheckMonitorStability()
