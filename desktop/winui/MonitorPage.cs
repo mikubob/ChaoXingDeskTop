@@ -131,9 +131,7 @@ public sealed partial class MainWindow
             dialog.SecondaryButtonText = "复制正文";
             dialog.SecondaryButtonClick += async (_, args) => { args.Cancel = true; await Call(kind == "discussions" ? "copyDiscussion" : "copyActivity", J.S(row, "id")); };
         }
-        currentDialog = dialog;
-        try { if (await dialog.ShowAsync() == ContentDialogResult.Primary) await Call("openDraftCopy", kind == "discussions" ? "discussion" : "activity", J.S(row, "id")); }
-        finally { currentDialog = null; }
+        if (await ShowModal(dialog) == ContentDialogResult.Primary) await Call("openDraftCopy", kind == "discussions" ? "discussion" : "activity", J.S(row, "id"));
     }
     private static string ChapterDetailText(JsonNode row)
     {
@@ -195,7 +193,7 @@ public sealed partial class MainWindow
             if (await Confirm("删除 AI 档案？", "将删除「" + item.Label + "」的本机加密档案，无法撤销。", "删除此档案")) await Call("aiProfileAction", "delete", item.Value);
         });
         ((StackPanel)dialog.Content).Children.Add(delete);
-        currentDialog = dialog; try { await dialog.ShowAsync(); } finally { currentDialog = null; }
+        await ShowModal(dialog);
     }
 
     private async Task ShowHistory()
@@ -208,7 +206,7 @@ public sealed partial class MainWindow
             panel.Children.Add(Card(Column(Text(J.S(row, "started_at", J.S(row, "time", id))), Text(DetailText(row), 12, true), Button("从摘要恢复选课", async () => { currentDialog?.Hide(); await Call("prepareRecovery", id); }, true))));
         }
         if (rows.Count == 0) panel.Children.Add(Text("暂无运行摘要。任务运行后将在本机保存。"));
-        var dialog = Dialog("运行摘要", Scroll(panel)); currentDialog = dialog; try { await dialog.ShowAsync(); } finally { currentDialog = null; }
+        var dialog = Dialog("运行摘要", Scroll(panel)); await ShowModal(dialog);
     }
     private async Task ShowSavedDrafts()
     {
@@ -220,6 +218,6 @@ public sealed partial class MainWindow
                 Button("删除副本…", async () => { currentDialog?.Hide(); currentDialog = null; if (await Confirm("删除人工副本？", "只删除独立的本机副本，无法撤销。", "删除此副本")) await Call("deleteSavedDraft", id, J.I(row, "version")); })))));
         }
         if (rows.Count == 0) panel.Children.Add(Text("暂无人工副本。请从讨论或活动详情打开「编辑本地副本」。"));
-        var dialog = Dialog("已保存人工副本", Scroll(panel)); currentDialog = dialog; try { await dialog.ShowAsync(); } finally { currentDialog = null; }
+        var dialog = Dialog("已保存人工副本", Scroll(panel)); await ShowModal(dialog);
     }
 }

@@ -111,9 +111,8 @@ public sealed partial class MainWindow
             dialog.SecondaryButtonClick += async (_, _) => await Call("reply", "", false);
         }
         dialog.CloseButtonClick += async (_, _) => await Call("reply", "", true);
-        manualDialog = currentDialog = dialog;
         dialog.Closing += (_, args) => { if (inputSignature == signature && backend.State["input"] is JsonObject active && active.Count > 0) args.Cancel = true; };
-        try { await dialog.ShowAsync(); } finally { if (manualDialog == dialog) manualDialog = null; currentDialog = null; }
+        await ShowModal(dialog, manual: true, stillWanted: () => inputSignature == signature && backend.State["input"] is JsonObject active && active.Count > 0);
     }
 
     private async Task ShowDraft(JsonNode copy)
@@ -155,12 +154,21 @@ public sealed partial class MainWindow
                 }
             }
         }
-        var update = new Action(() => { feedback.Message = J.S(backend.State, "draftFeedback"); foreach (var control in editorControls) control.IsEnabled = J.B(backend.State, "draftEditable"); });
+        var update = new Action(() => { UpdateDraftFeedback(feedback); foreach (var control in editorControls) control.IsEnabled = J.B(backend.State, "draftEditable"); });
         refreshers.Add(update); update();
         panel.Children.Add(feedback);
         panel.Children.Add(Row(Button("复制副本", async () => await Call("exportDraftCopy", true)), Button("导出副本…", () => FileAction("exportDraftCopy", [false], true, "txt", "draft-copy"))));
         var dialog = Dialog("人工编辑副本 · 仅本地", Scroll(panel)); dialog.PrimaryButtonText = "保存本机副本";
-        dialog.PrimaryButtonClick += async (_, args) => { args.Cancel = true; await Call("saveDraftCopy"); };
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
+            {
+                await SaveDraftFromEditor(feedback);
+            }
+            finally { deferral.Complete(); }
+        };
         bool discard = false;
         dialog.CloseButtonClick += (_, args) =>
         {
@@ -171,6 +179,30 @@ public sealed partial class MainWindow
             }
         };
         dialog.Closing += (_, args) => { if (J.B(backend.State, "draftDirty") && !discard) { args.Cancel = true; feedback.Message = "尚有未保存修改。请先保存，或点击「关闭」选择放弃修改。"; } };
-        currentDialog = dialog; try { await dialog.ShowAsync(); } finally { refreshers.Remove(update); currentDialog = null; }
+        try { await ShowModal(dialog); } finally { refreshers.Remove(update); }
+    }
+
+    private void UpdateDraftFeedback(InfoBar feedback)
+    {
+        var scoped = backend.State["uiFeedback"]?["draft"];
+        feedback.Message = J.S(scoped, "message", J.S(backend.State, "draftFeedback"));
+        feedback.Severity = J.S(scoped, "tone", J.S(backend.State, "draftFeedbackTone")) switch
+        {
+            "danger" => InfoBarSeverity.Error,
+            "warning" => InfoBarSeverity.Warning,
+            "success" => InfoBarSeverity.Success,
+            _ => InfoBarSeverity.Informational,
+        };
+    }
+
+    private async Task SaveDraftFromEditor(InfoBar feedback)
+    {
+        bool saved = (await Call("saveDraftCopy"))?.ToString() == "true";
+        UpdateDraftFeedback(feedback);
+        if (!saved && feedback.Severity != InfoBarSeverity.Error)
+        {
+            feedback.Message = J.S(Summary, "message", "保存失败，请检查磁盘空间与副本版本后重试。");
+            feedback.Severity = InfoBarSeverity.Error;
+        }
     }
 }

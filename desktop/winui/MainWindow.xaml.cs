@@ -20,6 +20,8 @@ public sealed partial class MainWindow : Window
     private readonly List<Control> idleControls = new();
     private readonly Dictionary<string, Control> fields = new();
     private readonly HashSet<string> correctingFields = new();
+    private readonly Dictionary<string, Action> finishCorrections = new();
+    private readonly SemaphoreSlim modalGate = new(1, 1);
     private readonly Dictionary<string, string> fieldGroups = new();
     private Action<string>? revealServiceGroup;
     private readonly Dictionary<string, ListView> resultLists = new();
@@ -238,16 +240,31 @@ public sealed partial class MainWindow : Window
     private async Task<bool> Confirm(string title, string body, string primary)
     {
         var dialog = Dialog(title, Scroll(Text(body)), "取消"); dialog.PrimaryButtonText = primary;
-        currentDialog = dialog;
-        try { return await dialog.ShowAsync() == ContentDialogResult.Primary; }
-        finally { currentDialog = null; }
+        return await ShowModal(dialog) == ContentDialogResult.Primary;
     }
     private async Task ShowText(string title, string body, UIElement? actions = null)
     {
         var text = ReadOnlyBody(body);
         var dialog = Dialog(title, actions == null ? text : Column(text, actions));
-        currentDialog = dialog;
-        try { await dialog.ShowAsync(); } finally { currentDialog = null; }
+        await ShowModal(dialog);
+    }
+
+    private async Task<ContentDialogResult> ShowModal(ContentDialog dialog, bool manual = false, Func<bool>? stillWanted = null)
+    {
+        await modalGate.WaitAsync();
+        try
+        {
+            if (closing || stillWanted?.Invoke() == false) return ContentDialogResult.None;
+            currentDialog = dialog;
+            if (manual) manualDialog = dialog;
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            if (currentDialog == dialog) currentDialog = null;
+            if (manualDialog == dialog) manualDialog = null;
+            modalGate.Release();
+        }
     }
 
     private static ScrollViewer ReadOnlyBody(string body) => new()

@@ -195,7 +195,7 @@ public sealed partial class MainWindow
         var input = new TextBox { PlaceholderText = title, Text = Value(section, key), HorizontalAlignment = HorizontalAlignment.Stretch, AcceptsReturn = multiline, TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap, MinHeight = multiline ? 130 : 38 };
         AutomationProperties.SetName(input, title); fields[section + "." + key] = input; idleControls.Add(input);
         input.TextChanged += async (_, _) => { if (!refreshing) await Call("setValue", section, key, input.Text); };
-        refreshers.Add(() => { if (input.FocusState == FocusState.Unfocused && input.Text != Value(section, key)) input.Text = Value(section, key); });
+        refreshers.Add(() => { if (!correctingFields.Contains(section + "." + key) && input.FocusState == FocusState.Unfocused && input.Text != Value(section, key)) input.Text = Value(section, key); });
         return input;
     }
     private PasswordBox BoundPassword(string title, string section, string key)
@@ -273,9 +273,11 @@ public sealed partial class MainWindow
                 Value(J.S(dependency, "section"), J.S(dependency, "key")).Equals(J.S(dependency, "value"), StringComparison.OrdinalIgnoreCase)));
             // Keep correction available throughout incomplete edits and backend
             // refreshes; release it only on blur with an acceptable value.
-            input.LostFocus += (_, _) =>
+            void FinishCorrection()
             {
-                string value = Value(section, key);
+                string value = input is TextBox text ? text.Text : Value(section, key);
+                // A navigation blur can still see the old displayed value.
+                if (value != Value(section, key)) return;
                 bool valid = kind is "integer" or "number"
                     ? double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double number)
                         && double.IsFinite(number) && (kind != "integer" || number == Math.Truncate(number))
@@ -283,7 +285,9 @@ public sealed partial class MainWindow
                         && number <= double.Parse(J.S(spec, "high"), System.Globalization.CultureInfo.InvariantCulture)
                     : value.Length > 0;
                 if (valid) correctingFields.Remove(fieldId);
-            };
+            }
+            finishCorrections[fieldId] = FinishCorrection;
+            input.LostFocus += (_, _) => FinishCorrection();
         }
         return panel;
     }

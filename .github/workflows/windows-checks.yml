@@ -64,7 +64,9 @@ jobs:
           $env:QT_QPA_PLATFORM = 'offscreen'
           $env:QSG_RHI_BACKEND = 'software'
           .venv-ci/Scripts/python.exe run.py --smoke-test build/ci-checks/source
-          if ($LASTEXITCODE -ne 0) { throw 'Source worker integration failed' }
+          $sourceSmokeExit = $LASTEXITCODE
+          if (Test-Path build/ci-checks/source/result.json) { Get-Content build/ci-checks/source/result.json -Raw -Encoding UTF8 }
+          if ($sourceSmokeExit -ne 0) { throw 'Source worker integration failed' }
           .venv-ci/Scripts/python.exe tests/performance_smoke.py --tasks 10000 --events 1000 --questions 1000 --rounds 3 --max-round-seconds 20 --max-heartbeat-p95-ms 500 --output build/ci-checks/performance.json
           if ($LASTEXITCODE -ne 0) { throw 'Performance budget exceeded' }
           .venv-ci/Scripts/python.exe tests/performance_smoke.py --attention --tasks 10000 --events 1000 --questions 2500 --rounds 3 --max-round-seconds 20 --max-heartbeat-p95-ms 500 --output build/ci-checks/performance-attention.json

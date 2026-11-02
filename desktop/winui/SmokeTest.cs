@@ -10,6 +10,7 @@ public sealed partial class MainWindow
 {
     private string? smokeDestination;
     private bool smokeStarted;
+    private string smokeStep = "startup";
     private void ConfigureSmoke()
     {
         var args = Environment.GetCommandLineArgs(); int index = Array.IndexOf(args, "--smoke-test");
@@ -18,7 +19,7 @@ public sealed partial class MainWindow
     private async Task WaitFor(Func<bool> predicate, int seconds = 20)
     {
         var deadline = DateTime.UtcNow.AddSeconds(seconds);
-        while (!predicate()) { if (DateTime.UtcNow > deadline) throw new TimeoutException($"离线界面验收超时：page={Navigation.SelectedIndex}, ready={CoursesReady}, coursesShown={showingMyCourses}, pending={coursesLoadedPending}, animations={contentAnimations.Count}, busy={Busy}, message={J.S(Summary, "message")}。"); await Task.Delay(50); }
+        while (!predicate()) { if (DateTime.UtcNow > deadline) throw new TimeoutException($"离线界面验收超时：step={smokeStep}, page={Navigation.SelectedIndex}, ready={CoursesReady}, coursesShown={showingMyCourses}, pending={coursesLoadedPending}, animations={contentAnimations.Count}, busy={Busy}, message={J.S(Summary, "message")}。"); await Task.Delay(50); }
     }
     private async Task RunSmoke()
     {
@@ -34,6 +35,7 @@ public sealed partial class MainWindow
             await Task.Delay(100);
             if (pages.Count != 5 || fields.Count < 40) throw new InvalidOperationException("页面或设置表单未加载。");
             await CheckSettingsReviewRegressions();
+            await CheckModalReviewRegressions();
             await CheckThemes();
             ShowCourseView(true, animate: false);
             if (showingMyCourses || CoursesReady || courseViews[1].Visibility != Visibility.Collapsed)
@@ -180,15 +182,26 @@ public sealed partial class MainWindow
             await Call("setValue", "common", "work_max_retries", "invalid");
             await Call("setValue", "common", "work_redo_enabled", "false");
             if ((await Call("save"))?.ToString() == "true") throw new InvalidOperationException("无效重试次数未被校验。");
-            await WaitFor(() => correctingFields.Contains("common.work_max_retries") && edit.IsEnabled && edit.FocusState != FocusState.Unfocused);
+            smokeStep = "correction requested";
+            await WaitFor(() => correctingFields.Contains("common.work_max_retries") && edit.IsEnabled);
+            await WaitFor(() => !contentAnimations.ContainsKey(PageHost));
+            Root.UpdateLayout();
+            await Task.Delay(100);
             edit.Text = "";
+            smokeStep = "empty edit acknowledged";
             await WaitFor(() => Value("common", "work_max_retries") == "");
+            finishCorrections["common.work_max_retries"]();
             if (!edit.IsEnabled) throw new InvalidOperationException("编辑无效依赖字段时被再次禁用。");
             edit.Text = "2";
+            smokeStep = "valid edit acknowledged";
             await WaitFor(() => Value("common", "work_max_retries") == "2");
             if (!edit.IsEnabled || (await Call("save"))?.ToString() != "true")
                 throw new InvalidOperationException("依赖关闭时无法完成字段修正。");
             SaveButton.Focus(FocusState.Programmatic);
+            // Hosted Windows runners need not grant foreground focus. Exercise
+            // the same editing-finished handler without requiring OS focus.
+            finishCorrections["common.work_max_retries"]();
+            smokeStep = "correction finished";
             await WaitFor(() => !correctingFields.Contains("common.work_max_retries"));
             Refresh(new JsonObject());
             if (edit.IsEnabled) throw new InvalidOperationException("合法修正失焦后未恢复依赖禁用规则。");
@@ -332,7 +345,7 @@ public sealed partial class MainWindow
         SyncRows("tasks", list, J.A(backend.State["tasks"]).Select(n => new RecordRow(n)));
 
         var dialog = Dialog("离线详情居中验收", new TextBox { Text = "章节详情", MinWidth = 480 });
-        var shown = dialog.ShowAsync();
+        var shown = ShowModal(dialog);
         try
         {
             await WaitFor(() => VisualChild<Border>(dialog, "BackgroundElement")?.ActualWidth > 0);
@@ -352,6 +365,62 @@ public sealed partial class MainWindow
             finally { AppWindow.Resize(original); }
         }
         finally { dialog.Hide(); await shown; }
+    }
+
+    private async Task CheckModalReviewRegressions()
+    {
+        var originalInput = backend.State["input"]?.DeepClone();
+        string originalSignature = inputSignature;
+        Task? manual = null;
+        var info = ShowText("显示与写盘容量", "离线容量检查");
+        try
+        {
+            await WaitFor(() => currentDialog?.IsLoaded == true);
+            var first = currentDialog!;
+            var input = new JsonObject { ["title"] = "排队的人工问题", ["type"] = "text" };
+            backend.State["input"] = input.DeepClone(); inputSignature = "modal-review";
+            // Same path used when a worker request arrives during an info dialog.
+            EnqueueDialog(async () => { manual = ShowInput(input, "modal-review"); await manual; });
+            await Task.Delay(100);
+            if (currentDialog != first || manualDialog != null || manual?.IsFaulted == true)
+                throw new InvalidOperationException("信息弹窗和人工补全没有串行显示。");
+            first.Hide(); await info;
+            await WaitFor(() => manualDialog?.IsLoaded == true);
+            if (currentDialog != manualDialog) throw new InvalidOperationException("人工问题被信息弹窗覆盖。");
+        }
+        finally
+        {
+            inputSignature = originalSignature;
+            backend.State["input"] = originalInput;
+            manualDialog?.Hide();
+            if (manual != null) await manual;
+            await info;
+        }
+        await WaitFor(() => !processingDialogs);
+
+        var originalFeedback = backend.State["uiFeedback"]?.DeepClone();
+        var draft = ShowDraft(new JsonObject { ["kind"] = "discussion", ["content"] = "保留的编辑内容",
+            ["source"] = new JsonObject { ["title"] = "保存失败验收" } });
+        try
+        {
+            await WaitFor(() => currentDialog?.IsLoaded == true);
+            var dialog = currentDialog!;
+            var feedback = VisualChild<InfoBar>(dialog)!;
+            await SaveDraftFromEditor(feedback); // No source draft: backend rejects this synthetic save.
+            if (feedback.Severity != InfoBarSeverity.Error || string.IsNullOrWhiteSpace(feedback.Message))
+                throw new InvalidOperationException("人工副本保存失败未在编辑器内显示。");
+            if (!VisualChild<TextBox>(dialog)!.Text.Contains("保留的编辑内容"))
+                throw new InvalidOperationException("保存失败丢失了编辑内容。");
+            foreach (var tone in new[] { "danger", "warning", "success" })
+            {
+                backend.State["uiFeedback"] = new JsonObject { ["draft"] = new JsonObject { ["message"] = "副本反馈 " + tone, ["tone"] = tone } };
+                UpdateDraftFeedback(feedback);
+                var expected = tone == "danger" ? InfoBarSeverity.Error : tone == "warning" ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
+                if (feedback.Message != "副本反馈 " + tone || feedback.Severity != expected)
+                    throw new InvalidOperationException("副本操作反馈或严重程度未同步。");
+            }
+        }
+        finally { currentDialog?.Hide(); await draft; backend.State["uiFeedback"] = originalFeedback; }
     }
 
     private async Task CheckRecordDetails()
