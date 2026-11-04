@@ -266,29 +266,29 @@ public sealed partial class MainWindow
         }, true));
         if (J.S(spec, "hint") is { Length: > 0 } hint) panel.Children.Add(Text(hint, 12, true));
         if (kind is "integer" or "number") panel.Children.Add(Text($"范围：{J.S(spec, "low")}–{J.S(spec, "high")}", 11, true));
+        string fieldId = section + "." + key;
         if (spec["depends"] is JsonObject dependency && J.S(dependency, "key") != "")
         {
-            string fieldId = section + "." + key;
             refreshers.Add(() => input.IsEnabled = !Busy && (correctingFields.Contains(fieldId) ||
                 Value(J.S(dependency, "section"), J.S(dependency, "key")).Equals(J.S(dependency, "value"), StringComparison.OrdinalIgnoreCase)));
-            // Keep correction available throughout incomplete edits and backend
-            // refreshes; release it only on blur with an acceptable value.
-            void FinishCorrection()
-            {
-                string value = input is TextBox text ? text.Text : Value(section, key);
-                // A navigation blur can still see the old displayed value.
-                if (value != Value(section, key)) return;
-                bool valid = kind is "integer" or "number"
-                    ? double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double number)
-                        && double.IsFinite(number) && (kind != "integer" || number == Math.Truncate(number))
-                        && number >= double.Parse(J.S(spec, "low"), System.Globalization.CultureInfo.InvariantCulture)
-                        && number <= double.Parse(J.S(spec, "high"), System.Globalization.CultureInfo.InvariantCulture)
-                    : value.Length > 0;
-                if (valid) correctingFields.Remove(fieldId);
-            }
-            finishCorrections[fieldId] = FinishCorrection;
-            input.LostFocus += (_, _) => FinishCorrection();
         }
+        // Every field can be targeted by validation, including fields without
+        // dependencies. Release correction on blur so later imports can refresh it.
+        void FinishCorrection()
+        {
+            string value = input is TextBox text ? text.Text : Value(section, key);
+            // A navigation blur can still see the old displayed value.
+            if (value != Value(section, key)) return;
+            bool valid = kind is "integer" or "number"
+                ? double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double number)
+                    && double.IsFinite(number) && (kind != "integer" || number == Math.Truncate(number))
+                    && number >= double.Parse(J.S(spec, "low"), System.Globalization.CultureInfo.InvariantCulture)
+                    && number <= double.Parse(J.S(spec, "high"), System.Globalization.CultureInfo.InvariantCulture)
+                : value.Length > 0;
+            if (valid) correctingFields.Remove(fieldId);
+        }
+        finishCorrections[fieldId] = FinishCorrection;
+        input.LostFocus += (_, _) => FinishCorrection();
         return panel;
     }
 
@@ -302,8 +302,9 @@ public sealed partial class MainWindow
             string key = J.S(provider, "key"), title = J.S(provider, "title"), secret = J.S(provider, "secret");
             var enabled = new ToggleSwitch { Header = title, IsOn = J.B(provider, "enabled") }; idleControls.Add(enabled);
             enabled.Toggled += async (_, _) => { if (!refreshing) await Call("toggleProvider", key, enabled.IsOn); };
-            var health = Text(J.S(provider, "health"), 12, true);
-            refreshers.Add(() => { var row = J.A(backend.State["providers"]).FirstOrDefault(n => J.S(n, "key") == key); enabled.IsOn = J.B(row, "enabled"); health.Text = J.S(row, "health"); });
+            var health = Text(J.S(backend.State["serviceHealth"], key), 12, true);
+            health.Name = key + "Health";
+            refreshers.Add(() => { var row = J.A(backend.State["providers"]).FirstOrDefault(n => J.S(n, "key") == key); enabled.IsOn = J.B(row, "enabled"); health.Text = J.S(backend.State["serviceHealth"], key); });
             var up = Button("上移", async () => await Call("moveProvider", J.A(backend.State["providers"]).Select(n => J.S(n, "key")).ToList().IndexOf(key), -1), true);
             var down = Button("下移", async () => await Call("moveProvider", J.A(backend.State["providers"]).Select(n => J.S(n, "key")).ToList().IndexOf(key), 1), true);
             var content = Column(Text("服务凭据"), BoundPassword("服务凭据", "question_bank", secret), BuildGroups(bankMap[key]),

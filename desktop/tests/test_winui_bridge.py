@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 
 class WinUIBridgeTests(unittest.TestCase):
@@ -148,6 +149,89 @@ class WinUIBridgeTests(unittest.TestCase):
         self.process.stdin.close()
         self.process.wait(timeout=8)
         self.assertEqual(self.process.returncode, 0)
+
+
+class BridgeStateNotificationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from PySide6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from chaoxing_desktop.winui_bridge import Bridge
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        env = patch.dict(os.environ, CHAOXING_DESKTOP_DATA=self.directory.name)
+        env.start()
+        self.addCleanup(env.stop)
+        network = patch('requests.sessions.Session.request', side_effect=AssertionError('offline only'))
+        network.start()
+        self.addCleanup(network.stop)
+        self.state, self.messages = {}, []
+
+        def send(message):
+            self.messages.append(message)
+            if message['type'] == 'state':
+                self.state.update(message['data'])
+
+        self.bridge = Bridge(self.app, send)
+        self.b = self.bridge.backend
+
+    def tearDown(self):
+        self.b.controller.active = False
+        self.bridge.timer.stop()
+        self.bridge.dispose()
+        self.b.deleteLater()
+        self.bridge.guard.deleteLater()
+        self.app.processEvents()
+
+    def test_saved_draft_unlocks_on_worker_completion_and_locks_on_source_change(self):
+        from chaoxing_desktop.discussion_model import safe_record
+        source = safe_record(dict(id='review-draft', run_id='review-run', task_id='review-task',
+                                  title='合成讨论', course='合成课程', chapter='合成章节', level='medium',
+                                  source='ai', stage='draft', content='合成草稿', task_status='pending',
+                                  reason='', elapsed_ms=0), lambda text: text)
+        self.b.demo_mode = True
+        self.b._discussion_model.upsert(source)
+        self.b.openDraftCopy('discussion', source['id'])
+        self.assertTrue(self.b.draftEditable)
+        self.assertTrue(self.b.saveDraftCopy())
+        copy_id = self.b._draft['id']
+        self.b.operation = 'ai_check'
+        self.b.controller.active = True
+        self.b.controller.busy_changed.emit(True)
+        self.assertTrue(self.b.openSavedDraft(copy_id))
+        self.bridge.flush()
+        self.assertFalse(self.state['draftEditable'])
+
+        self.messages.clear()
+        self.b.controller.active = False
+        self.b.controller.busy_changed.emit(False)
+        self.b.controller.finished.emit(0)
+        self.bridge.flush()
+        self.assertTrue(self.b.draftEditable)
+        self.assertTrue(self.state['draftEditable'])
+        # Completion must send editability without a draftChanged notification.
+        self.assertNotIn('draftFeedback', self.messages[-1]['data'])
+
+        self.b._discussion_model.upsert(dict(source, stage='publish_unknown'))
+        self.b.changed.emit()
+        self.bridge.flush()
+        self.assertFalse(self.state['draftEditable'])
+
+    def test_bank_edits_expire_health_without_resending_providers(self):
+        for key, value in (('go_endpoint', 'https://example.invalid/bank'),
+                           ('go_authorization', 'synthetic-review-credential')):
+            with self.subTest(key=key):
+                self.b.remember_check('TikuGo', '连接可用')
+                self.bridge.mark('summary')
+                self.bridge.flush()
+                self.assertIn('连接可用', self.state['serviceHealth']['TikuGo'])
+                self.messages.clear()
+                self.b.setValue('question_bank', key, value)
+                self.bridge.flush()
+                self.assertIn('已过期', self.state['serviceHealth']['TikuGo'])
+                self.assertNotIn('providers', self.messages[-1]['data'])
 
 
 if __name__ == '__main__':

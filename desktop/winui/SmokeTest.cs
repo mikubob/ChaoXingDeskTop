@@ -35,6 +35,7 @@ public sealed partial class MainWindow
             await Task.Delay(100);
             if (pages.Count != 5 || fields.Count < 40) throw new InvalidOperationException("页面或设置表单未加载。");
             await CheckSettingsReviewRegressions();
+            await CheckBankHealthReviewRegression();
             await CheckModalReviewRegressions();
             await CheckThemes();
             ShowCourseView(true, animate: false);
@@ -211,6 +212,66 @@ public sealed partial class MainWindow
             await Call("setValue", "common", "work_max_retries", retries);
             await Call("setValue", "common", "work_redo_enabled", redo);
             correctingFields.Remove("common.work_max_retries");
+            Refresh(new JsonObject());
+        }
+
+        string speed = Value("common", "speed");
+        var speedEdit = (TextBox)fields["common.speed"];
+        try
+        {
+            await Call("setValue", "common", "speed", "invalid");
+            if ((await Call("save"))?.ToString() == "true") throw new InvalidOperationException("无效倍速未被校验。");
+            smokeStep = "independent field correction requested";
+            await WaitFor(() => correctingFields.Contains("common.speed") && !contentAnimations.ContainsKey(PageHost));
+            speedEdit.Text = "1.5";
+            await WaitFor(() => Value("common", "speed") == "1.5");
+            if ((await Call("save"))?.ToString() != "true") throw new InvalidOperationException("普通字段修正后无法保存。");
+            Navigation.SelectedIndex = 0;
+            await WaitFor(() => !contentAnimations.ContainsKey(PageHost));
+            finishCorrections["common.speed"]();
+            if (correctingFields.Contains("common.speed")) throw new InvalidOperationException("普通字段纠错状态未清除。");
+            string path = Path.Combine(smokeDestination!, "review-import.ini");
+            await File.WriteAllTextAsync(path, "[common]\nspeed=2\n");
+            await backend.Call("fileAction", ["import_config"], path);
+            smokeStep = "independent field refreshed after import";
+            await WaitFor(() => Value("common", "speed") == "2" && speedEdit.Text == "2");
+        }
+        finally
+        {
+            correctingFields.Remove("common.speed");
+            await Call("setValue", "common", "speed", speed);
+            Refresh(new JsonObject());
+        }
+    }
+
+    private async Task CheckBankHealthReviewRegression()
+    {
+        Navigation.SelectedIndex = 2;
+        await WaitFor(() => !contentAnimations.ContainsKey(PageHost));
+        Root.UpdateLayout();
+        var originalProviders = backend.State["providers"]!.DeepClone();
+        var originalHealth = backend.State["serviceHealth"]!.DeepClone();
+        try
+        {
+            foreach (var provider in J.A(backend.State["providers"]))
+            {
+                string key = J.S(provider, "key");
+                provider["health"] = "旧连接检查成功";
+                backend.State["serviceHealth"]![key] = "配置已变化 · 上次测试已过期";
+            }
+            Refresh(new JsonObject());
+            foreach (var provider in J.A(backend.State["providers"]))
+            {
+                string key = J.S(provider, "key");
+                var health = VisualChild<TextBlock>(pages[2], key + "Health");
+                if (health == null || health.Text != J.S(backend.State["serviceHealth"], key))
+                    throw new InvalidOperationException("题库配置变更后仍显示旧检测结果：" + key);
+            }
+        }
+        finally
+        {
+            backend.State["providers"] = originalProviders;
+            backend.State["serviceHealth"] = originalHealth;
             Refresh(new JsonObject());
         }
     }
@@ -419,6 +480,7 @@ public sealed partial class MainWindow
         await WaitFor(() => !processingDialogs);
 
         var originalFeedback = backend.State["uiFeedback"]?.DeepClone();
+        bool originalEditable = J.B(backend.State, "draftEditable");
         var draft = ShowDraft(new JsonObject { ["kind"] = "discussion", ["content"] = "保留的编辑内容",
             ["source"] = new JsonObject { ["title"] = "保存失败验收" } });
         try
@@ -426,6 +488,13 @@ public sealed partial class MainWindow
             await WaitFor(() => currentDialog?.IsLoaded == true);
             var dialog = currentDialog!;
             var feedback = VisualChild<InfoBar>(dialog)!;
+            foreach (bool editable in new[] { false, true, false })
+            {
+                backend.State["draftEditable"] = editable;
+                Refresh(new JsonObject());
+                if (VisualChild<TextBox>(dialog)!.IsEnabled != editable)
+                    throw new InvalidOperationException("后台状态变化后草稿编辑权限未刷新。");
+            }
             await SaveDraftFromEditor(feedback); // No source draft: backend rejects this synthetic save.
             if (feedback.Severity != InfoBarSeverity.Error || string.IsNullOrWhiteSpace(feedback.Message))
                 throw new InvalidOperationException("人工副本保存失败未在编辑器内显示。");
@@ -440,7 +509,7 @@ public sealed partial class MainWindow
                     throw new InvalidOperationException("副本操作反馈或严重程度未同步。");
             }
         }
-        finally { currentDialog?.Hide(); await draft; backend.State["uiFeedback"] = originalFeedback; }
+        finally { currentDialog?.Hide(); await draft; backend.State["uiFeedback"] = originalFeedback; backend.State["draftEditable"] = originalEditable; }
     }
 
     private async Task CheckRecordDetails()

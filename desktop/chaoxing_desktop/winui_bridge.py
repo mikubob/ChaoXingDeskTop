@@ -116,12 +116,12 @@ class Bridge:
                              strategySummary=b.strategySummary, capacityInfo=b.capacityInfo,
                              discussionPreview=b.discussionPreview, activityPreview=b.activityPreview,
                              runHistory=b.runHistory, historyError=b.historyError, uiFeedback=b.uiFeedback,
-                             aiWarning=b.aiWarning)
+                             aiWarning=b.aiWarning, draftEditable=b.draftEditable)
             elif name == "courses":
                 state["courses"] = b.courseRows
             elif name == "draft":
                 state.update(draftFeedback=b.draftFeedback, draftDirty=b.draftDirty,
-                             draftEditable=b.draftEditable, draftFeedbackTone=b.draftFeedbackTone)
+                             draftFeedbackTone=b.draftFeedbackTone)
             else:
                 state[name] = getattr(b, name)
         return state

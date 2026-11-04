@@ -1,6 +1,7 @@
 import os
 import io
-from contextlib import redirect_stdout
+import json
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import tempfile
 import unittest
@@ -48,13 +49,34 @@ class WinUILauncherTests(unittest.TestCase):
     def test_relaunch_on_english_windows_output_encoding(self):
         raw = io.BytesIO()
         stream = io.TextIOWrapper(raw, encoding='cp1252', errors='strict')
-        with redirect_stdout(stream), \
+        with redirect_stderr(stream), \
                 patch('chaoxing_desktop.launch_bootstrap.importlib.util.find_spec', return_value=None), \
                 patch('chaoxing_desktop.launch_bootstrap.project_python', return_value=Path('project-python.exe')), \
                 patch('chaoxing_desktop.launch_bootstrap.subprocess.call', return_value=0):
             self.assertEqual(relaunch_if_needed(), 0)
         stream.flush()
         self.assertIn(b'project-python.exe', raw.getvalue())
+
+    def test_relaunch_keeps_diagnostics_out_of_protocol_stdout(self):
+        for mode in ('--bridge', '--worker'):
+            with self.subTest(mode=mode):
+                output, errors = io.StringIO(), io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors), \
+                        patch('chaoxing_desktop.launch_bootstrap.importlib.util.find_spec', return_value=None), \
+                        patch('chaoxing_desktop.launch_bootstrap.project_python', return_value=Path('project-python.exe')), \
+                        patch('chaoxing_desktop.launch_bootstrap.subprocess.call',
+                              side_effect=lambda *a, **kw: print('{"type":"ready"}') or 0), \
+                        patch('sys.argv', ['run.py', mode]):
+                    self.assertEqual(relaunch_if_needed(), 0)
+                self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()], [{'type': 'ready'}])
+                self.assertIn('project-python.exe', errors.getvalue())
+
+    def test_relaunch_without_stderr(self):
+        with patch('sys.stderr', None), \
+                patch('chaoxing_desktop.launch_bootstrap.importlib.util.find_spec', return_value=None), \
+                patch('chaoxing_desktop.launch_bootstrap.project_python', return_value=Path('project-python.exe')), \
+                patch('chaoxing_desktop.launch_bootstrap.subprocess.call', return_value=0):
+            self.assertEqual(relaunch_if_needed(), 0)
 
     def test_bootstrap_reports_missing_environment_without_installing_anything(self):
         with patch('chaoxing_desktop.launch_bootstrap.importlib.util.find_spec', return_value=None), \

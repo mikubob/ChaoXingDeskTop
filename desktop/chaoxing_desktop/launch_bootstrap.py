@@ -30,8 +30,9 @@ def relaunch_if_needed():
     if python is None:
         raise RuntimeError('当前 Python 未安装 PySide6，且未找到可用的项目虚拟环境。'
                            '请使用 desktop/.venv/Scripts/python.exe 运行，或在虚拟环境安装 desktop/requirements.txt。')
-    if sys.stdout is not None:
+    # stdout belongs to the JSON-lines protocol in bridge/worker modes.
+    if sys.stderr is not None:
         message = f'当前 Python 缺少桌面依赖，使用项目环境：{python}'
-        encoding = sys.stdout.encoding or 'utf-8'
-        print(message.encode(encoding, errors='backslashreplace').decode(encoding), flush=True)
+        encoding = sys.stderr.encoding or 'utf-8'
+        print(message.encode(encoding, errors='backslashreplace').decode(encoding), file=sys.stderr, flush=True)
     return subprocess.call([str(python), str(root / 'run.py'), *sys.argv[1:]], cwd=root)

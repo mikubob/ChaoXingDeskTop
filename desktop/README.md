@@ -178,6 +178,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDir
 
 ### 生成安装包
 
+一键构建程序并生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）：
+
+```powershell
+.\scripts\build-installer.ps1
+```
+
+脚本自动查找 PATH、`desktop/build/nsis-tools/nsis-3.11/`、Program Files 和 `C:/Tools/NSIS/` 中的 `makensis.exe`，也可通过 `-Compiler "D:/Tools/NSIS/makensis.exe"` 指定。默认程序目录为 `desktop/dist/ChaoxingDesktop/`，安装包输出至项目根目录的 `release/`。可使用 `-AppDirectory`、`-OutputDirectory` 修改目录；相对路径均以 `desktop` 为基准。`-Wheelhouse` 可传入本地依赖目录。
+
+已有完成验收且源码未变化的程序时，可使用 `-SkipBuild -AppDirectory dist/release-0.4.2/ChaoxingDesktop` 仅生成安装包；仍会校验构建记录、源码哈希与验收标记。
+
+也可分步调用底层打包工具：
+
 准备 [NSIS 编译器](https://nsis.sourceforge.io/Download)，将下方路径替换为本机的 `makensis.exe`：
 
 ```powershell
