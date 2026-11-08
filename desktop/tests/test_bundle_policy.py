@@ -2,12 +2,29 @@
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from scripts.bundle_support import trim_bundle
-from scripts.build_installer import retired_runtime_files
+from scripts.build_installer import installer_copy_ignore, retired_runtime_files
 
 
 class BundlePolicyTests(unittest.TestCase):
+    def test_installer_omits_symbols_but_keeps_runtime_and_license(self):
+        with TemporaryDirectory() as directory:
+            for name in ('App.pdb', 'App.dll', 'LICENSE'):
+                (Path(directory) / name).touch()
+            (Path(directory) / 'data.pdb').mkdir()
+            self.assertEqual(installer_copy_ignore(directory,
+                ['App.pdb', 'App.dll', 'LICENSE', 'data.pdb']), ['App.pdb'])
+
+    def test_native_backend_omits_numpy_internal_test_extension(self):
+        paths = ['numpy/_core/_multiarray_tests.cp312-win_amd64.pyd',
+                 'numpy/_core/_multiarray_umath.cp312-win_amd64.pyd']
+        with patch('scripts.bundle_support.pefile.PE', side_effect=self.pe({})):
+            binaries, _ = trim_bundle([self.entry(p) for p in paths], [], native_backend=True)
+        self.assertEqual([e[0] for e in binaries], paths[1:])
+
     def test_upgrade_retirement_list_only_targets_runtime_files(self):
         files = retired_runtime_files()
         self.assertTrue(files)
@@ -61,6 +78,19 @@ class BundlePolicyTests(unittest.TestCase):
                    side_effect=self.pe({paths[0]: ['Qt6Pdf.dll']})):
             with self.assertRaisesRegex(RuntimeError, 'requires'):
                 trim_bundle([self.entry(path) for path in paths], [])
+
+    def test_native_backend_keeps_image_and_network_plugins_without_windowing(self):
+        paths = ['PySide6/QtGui.pyd', 'PySide6/Qt6Gui.dll', 'PySide6/Qt6Core.dll',
+                 'PySide6/plugins/imageformats/qsvg.dll', 'PySide6/Qt6Svg.dll',
+                 'PySide6/plugins/tls/qschannelbackend.dll', 'PySide6/plugins/platforms/qwindows.dll',
+                 'PySide6/plugins/styles/qmodernwindowsstyle.dll', 'PySide6/opengl32sw.dll']
+        imports = {paths[0]: ['Qt6Gui.dll'], paths[1]: ['Qt6Core.dll'],
+                   paths[3]: ['Qt6Svg.dll'], paths[4]: ['Qt6Gui.dll']}
+        with patch('scripts.bundle_support.pefile.PE', side_effect=self.pe(imports)):
+            binaries, datas = trim_bundle([self.entry(p) for p in paths],
+                [('PySide6/translations/qt_zh_CN.qm', '', 'DATA')], native_backend=True)
+        self.assertEqual({e[0] for e in binaries}, set(paths[:6]))
+        self.assertFalse(datas)
 
 
 if __name__ == '__main__':

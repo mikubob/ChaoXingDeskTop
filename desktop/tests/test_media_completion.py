@@ -130,6 +130,17 @@ class MediaCompletionTests(unittest.TestCase):
         with self.assertRaises(Cancelled):
             self.study(resume=152000, reply=lambda *args: (False, 200), wait=Mock(side_effect=Cancelled))
 
+    def test_forbidden_recovery_does_not_rewind_elapsed_playback(self):
+        def reply(report, reports):
+            if len(reports) == 3:
+                return False, 403
+            return report['event'] == 4, 200
+        result, reports, _, _ = self.study(reply=reply,
+            recover=Mock(return_value=dict(dtoken='new', duration=152, playTime=0)))
+        self.assertEqual(result, StudyResult.SUCCESS)
+        positions = [r['position'] for r in reports]
+        self.assertEqual(positions, sorted(positions))
+
 
 if __name__ == '__main__':
     unittest.main()

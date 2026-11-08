@@ -40,6 +40,8 @@ def create_client(config, channel, courses_only=False):
     def media_progress(**values):
         task_id = getattr(client.desktop_media_context, 'task_id', None)
         if task_id:
+            values.update(media_index=getattr(client.desktop_media_context, 'media_index', 1),
+                          media_total=getattr(client.desktop_media_context, 'media_total', 1))
             channel.send('media', id=task_id, **values)
     client.desktop_media_progress = media_progress
     client.desktop_record_cards = lambda **values: channel.send('record_card_hint', **values)
@@ -97,6 +99,8 @@ def process_chapter(client, course, point, speed, task_id=None):
         if context is not None:
             context.task_id = None
             context.chapter = None
+            context.media_index = 1
+            context.media_total = 1
 
 
 def _process_chapter(client, course, point, speed):
@@ -117,7 +121,14 @@ def _process_chapter(client, course, point, speed):
     # A chapter may contain several independent media. One unconfirmed job
     # must not hide or prevent the remaining jobs from being processed.
     outcome = ChapterResult.SUCCESS
+    media_total = sum(j.get('type') in ('video', 'audio') for j in jobs)
+    media_index = 0
     for index, job in enumerate(jobs):
+        if job.get('type') in ('video', 'audio'):
+            media_index += 1
+            context = getattr(client, 'desktop_media_context', None)
+            if context is not None:
+                context.media_index, context.media_total = media_index, media_total
         name = job.get('name') or job.get('title') or job.get('jobid') or job['type']
         logger.info('章节「{}」任务点 {}/{}：{}', title, index + 1, len(jobs), name)
         try:

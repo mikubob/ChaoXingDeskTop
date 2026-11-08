@@ -1,4 +1,4 @@
-# Build two launchers sharing dependencies; the worker needs redirected stdio.
+# Archived Python GUI specification; native builds use WinUIBackend.spec.
 from pathlib import Path
 import sys
 from importlib.metadata import distributions
@@ -26,7 +26,7 @@ a = Analysis(
            (str(root / 'THIRD_PARTY_NOTICES.md'), '.')] + metadata + collect_data_files('ddddocr', includes=['common_old.onnx']),
     hiddenimports=hidden,
     hookspath=[], hooksconfig={}, runtime_hooks=[],
-    excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick',
+    excludes=['cv2', 'ddddocr', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick',
               'PySide6.QtPdf', 'PySide6.QtPdfWidgets', 'PySide6.QtVirtualKeyboard',
               'tkinter', 'celery', 'flask', 'openai', 'httpx', 'httpx2', 'tqdm'],
     noarchive=False,

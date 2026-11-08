@@ -9,7 +9,7 @@ from PyInstaller.utils.win32.versioninfo import (
 )
 
 
-def trim_bundle(binaries, datas):
+def trim_bundle(binaries, datas, *, native_backend=False):
     # Remove whole optional plugin dependency groups, preserving SVG, raster
     # images, native Windows input, TLS and the software OpenGL fallback.
     unused = {
@@ -22,6 +22,15 @@ def trim_bundle(binaries, datas):
         target = Path(entry[0])
         name = target.name.lower()
         parts = {part.lower() for part in target.parts}
+        if native_backend and 'numpy' in parts and name.startswith('_multiarray_tests.'):
+            return False  # NumPy's compiled internal test suite is not a runtime dependency.
+        if native_backend and 'pyside6' in parts:
+            if parts.intersection({'qml', 'qmltooling', 'translations'}):
+                return False
+            if 'plugins' in parts and not parts.intersection({'imageformats', 'tls', 'networkinformation'}):
+                return False
+            if name == 'opengl32sw.dll':
+                return False  # Only CPU image codecs run here; WinUI owns rendering.
         if 'pyside6' in parts and 'qml' in parts:
             relative = tuple(part.lower() for part in target.parts)
             relative = relative[relative.index('qml') + 1:]

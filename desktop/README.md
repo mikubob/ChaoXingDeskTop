@@ -129,7 +129,7 @@ python -m venv .venv
 .venv/Scripts/python.exe run.py
 ```
 
-`run.py` 是主程序入口，后台进程使用同一入口的 `--worker` 模式。界面使用 Qt Quick / QML，以及 FluentWinUI3 和 Fusion / Basic 回退样式。
+`run.py` 是主程序入口，默认启动原生 WinUI 3 界面。首次运行前安装 .NET 8 SDK 并执行 `./scripts/build-winui.ps1`。后台进程使用 `--bridge` / `--worker` 模式，保留 Python 业务层与 Qt Core 模型；文件选择和界面渲染由 WinUI 负责。原 QML 参考界面可通过显式 `--legacy-qml` 启动。[原生界面开发与构建](winui/README.md)
 
 ## 测试
 
@@ -172,11 +172,23 @@ python -m venv .venv-build
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.4.2/ChaoxingDesktop
 ```
 
-构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后运行单元与源码界面回归、执行 PyInstaller，最后验收冻结 worker 与 QML 界面。
+构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后运行单元回归、发布自包含 WinUI 3 界面、使用 PyInstaller 打包 Python 后台，最后验收冻结 worker 与原生界面。开发机还需要 .NET 8 SDK。
 
 程序输出至 `dist/release-0.4.2/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
+
+一键构建程序并生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）：
+
+```powershell
+.\scripts\build-installer.ps1
+```
+
+脚本自动查找 PATH、`desktop/build/nsis-tools/nsis-3.11/`、Program Files 和 `C:/Tools/NSIS/` 中的 `makensis.exe`，也可通过 `-Compiler "D:/Tools/NSIS/makensis.exe"` 指定。默认程序目录为 `desktop/dist/ChaoxingDesktop/`，安装包输出至项目根目录的 `release/`。可使用 `-AppDirectory`、`-OutputDirectory` 修改目录；相对路径均以 `desktop` 为基准。`-Wheelhouse` 可传入本地依赖目录。
+
+已有完成验收且源码未变化的程序时，可使用 `-SkipBuild -AppDirectory dist/release-0.4.2/ChaoxingDesktop` 仅生成安装包；仍会校验构建记录、源码哈希与验收标记。
+
+也可分步调用底层打包工具：
 
 准备 [NSIS 编译器](https://nsis.sourceforge.io/Download)，将下方路径替换为本机的 `makensis.exe`：
 

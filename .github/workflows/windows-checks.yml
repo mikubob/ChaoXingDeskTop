@@ -15,6 +15,9 @@ jobs:
         with:
           python-version: '3.13.9'
           architecture: x64
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
       - name: Install locked dependencies in an isolated environment
         shell: pwsh
         working-directory: desktop
@@ -26,6 +29,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Dependency verification failed' }
           .venv-ci/Scripts/python.exe -m pip check
           if ($LASTEXITCODE -ne 0) { throw 'Dependency conflicts' }
+      - name: Build native WinUI 3 frontend
+        shell: pwsh
+        working-directory: desktop
+        run: ./scripts/build-winui.ps1 -Python .venv-ci/Scripts/python.exe -SkipTests -SkipGuiSmoke
       - name: Unit and protocol regressions (no credentials or external services)
         shell: pwsh
         working-directory: desktop
@@ -57,7 +64,9 @@ jobs:
           $env:QT_QPA_PLATFORM = 'offscreen'
           $env:QSG_RHI_BACKEND = 'software'
           .venv-ci/Scripts/python.exe run.py --smoke-test build/ci-checks/source
-          if ($LASTEXITCODE -ne 0) { throw 'Source worker integration failed' }
+          $sourceSmokeExit = $LASTEXITCODE
+          if (Test-Path build/ci-checks/source/result.json) { Get-Content build/ci-checks/source/result.json -Raw -Encoding UTF8 }
+          if ($sourceSmokeExit -ne 0) { throw 'Source worker integration failed' }
           .venv-ci/Scripts/python.exe tests/performance_smoke.py --tasks 10000 --events 1000 --questions 1000 --rounds 3 --max-round-seconds 20 --max-heartbeat-p95-ms 500 --output build/ci-checks/performance.json
           if ($LASTEXITCODE -ne 0) { throw 'Performance budget exceeded' }
           .venv-ci/Scripts/python.exe tests/performance_smoke.py --attention --tasks 10000 --events 1000 --questions 2500 --rounds 3 --max-round-seconds 20 --max-heartbeat-p95-ms 500 --output build/ci-checks/performance-attention.json

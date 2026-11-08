@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Installer,
     [Parameter(Mandatory=$true)][string]$Stage,
     [Parameter(Mandatory=$true)][string]$Destination,
-    [string]$PreviousInstaller = ''
+    [string]$PreviousInstaller = '',
+    [string]$Python = ''
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -64,12 +65,13 @@ if (Get-ChildItem -LiteralPath $taskInstalled -Recurse -File | Where-Object { $_
     throw 'Installer contains local settings'
 }
 $taskMarker = Get-Content -LiteralPath (Join-Path $taskInstalled 'installation.json') -Raw | ConvertFrom-Json
-$taskVersionPrefix = 'installer-' + ([System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskInstalled 'ChaoxingDesktop.exe')).ProductVersion.Replace('.', '_')) + '-'
+$taskVersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskInstalled 'ChaoxingDesktop.exe'))
+$taskVersionPrefix = 'installer-' + ('{0}_{1}_{2}' -f $taskVersionInfo.FileMajorPart, $taskVersionInfo.FileMinorPart, $taskVersionInfo.FileBuildPart) + '-'
 if ($taskPreviousProfile) {
     if ($taskMarker.profile -ne $taskPreviousProfile) { throw 'Upgrade replaced existing data profile' }
     if ((Get-Content -LiteralPath (Join-Path $taskInstalled 'keep-upgrade-file.txt') -Raw).Trim() -ne 'KEEP_UPGRADE_DATA') { throw 'Upgrade replaced extra user file' }
 } elseif ($taskMarker.profile -notmatch ('^' + [regex]::Escape($taskVersionPrefix) + '[a-f0-9]{16}$')) { throw 'Unexpected installation profile' }
-$taskPython = Join-Path $taskRoot '.venv-build/Scripts/python.exe'
+$taskPython = if ($Python) { [IO.Path]::GetFullPath($Python) } else { Join-Path $taskRoot '.venv-build/Scripts/python.exe' }
 $taskResolver = @'
 import os, pathlib, sys
 sys.path.insert(0, sys.argv[1])

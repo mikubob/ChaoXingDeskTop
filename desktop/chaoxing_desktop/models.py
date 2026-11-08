@@ -14,7 +14,7 @@ def media_status_text(media):
         return '平台已确认'
     if not media['active']:
         return '未确认完成'
-    return '等待平台核验' if media['percent'] >= 100 else '播放中'
+    return '等待平台核验' if media['position'] >= media['duration'] > 0 else '播放中'
 
 
 class TaskModel(QAbstractListModel):
@@ -71,7 +71,8 @@ class TaskModel(QAbstractListModel):
         self.rows[row]['media'] = dict(name=str(event.get('name', '')), kind=event.get('kind', 'Video'),
                                        duration=duration, position=position, active=True,
                                        verified=bool(event.get('verified', False)),
-                                       percent=round(100 * position / duration) if duration else 0)
+                                       mediaIndex=event.get('media_index', 1), mediaTotal=event.get('media_total', 1),
+                                       percent=int(100 * position / duration) if duration else 0)
         self.rows[row]['media']['statusText'] = media_status_text(self.rows[row]['media'])
         index = self.index(row)
         self.dataChanged.emit(index, index, [DATA_ROLE])

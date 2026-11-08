@@ -1,5 +1,5 @@
 """Shareable diagnostics: only typed policy values, never arbitrary user text."""
-from importlib.metadata import version
+from PySide6 import __version__ as pyside_version
 import math
 import platform
 
@@ -11,7 +11,7 @@ from .qml_schema import SCHEMA
 def diagnostic_config(config):
     out = parser()
     out['diagnostics'] = dict(application=__version__, python=platform.python_version(),
-                              pyside=version('PySide6'), scope='policy-only; no sessions or content')
+                              pyside=pyside_version, scope='policy-only; no sessions or content')
     for groups in SCHEMA.values():
         for group in groups:
             for spec in group['fields']:
