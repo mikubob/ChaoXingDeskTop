@@ -336,40 +336,17 @@ class Chaoxing:
 
     def _validate_cookie_session(self) -> bool:
         session = SessionManager.get_instance()._session
-        if not (session.cookies.get("_uid") or session.cookies.get("UID")):
+        if not session.cookies.get("_uid"):
             return False
 
-        self._course_snapshot = None
-        for attempt in range(2):
-            checkpoint(self)
-            try:
-                resp = session.post(
-                    "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/courselistdata",
-                    headers={"Referer": "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction?moocDomain=https://mooc1-1.chaoxing.com/mooc-ans"},
-                    data={"courseType": 1, "courseFolderId": 0, "query": "", "superstarClass": 0},
-                    timeout=(10, 30),
-                )
-                break
-            except RequestException as exc:
-                # Retry only transport failures; authentication and page errors
-                # below must still be checked against the platform response.
-                if isinstance(exc, requests.exceptions.ProxyError):
-                    detail = '无法连接代理，请检查系统或环境变量中的代理设置'
-                elif isinstance(exc, requests.exceptions.SSLError):
-                    detail = 'HTTPS 证书校验失败，请检查系统时间、证书或网络代理'
-                elif isinstance(exc, requests.Timeout):
-                    detail = '连接或读取课程接口超时'
-                else:
-                    detail = '无法连接课程接口，请检查网络或代理设置'
-                if attempt == 0 and not isinstance(exc, (requests.exceptions.ProxyError, requests.exceptions.SSLError)):
-                    logger.warning('会话校验连接失败，稍后重试（1/2）')
-                    controlled_wait(self, 1)
-                    continue
-                # Exception strings can contain proxy credentials or cookies.
-                raise PlatformResponseError(
-                    f'会话校验失败：{detail}。已保留登录信息，可点击「读取课程」重试；尚未确认登录失效。',
-                    'network_error',
-                ) from None
+        try:
+            resp = session.post(
+                "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/courselistdata",
+                data={"courseType": 1, "courseFolderId": 0, "query": "", "superstarClass": 0},
+                timeout=8,
+            )
+        except RequestException:
+            raise PlatformResponseError('会话校验暂时连接失败或超时，请重试；尚未确认 Cookie 失效。', 'network_error') from None
         try:
             text = checked_page(resp, 'courses')
             courses = decode_course_list(text)
@@ -777,9 +754,7 @@ class Chaoxing:
                         duration = int(refreshed_meta["duration"])
                         refreshed_play_time = refreshed_meta.get("playTime")
                         if refreshed_play_time is not None:
-                            # A stale server checkpoint must not replay time
-                            # already elapsed locally during this media task.
-                            play_time = min(duration, max(play_time, 0, int(refreshed_play_time)))
+                            play_time = min(duration, max(0, int(refreshed_play_time)))
 
                         logger.debug("刷新后的持续时间: {}, 播放时间: {}", duration, play_time)
                         next_report_at = time.monotonic()

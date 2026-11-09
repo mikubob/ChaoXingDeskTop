@@ -5,18 +5,12 @@ import zipfile
 
 def source_files(desktop: Path):
     root_files = (
-        ".gitignore", "run.py", "backend.py", "ChaoxingDesktop.spec", "WinUIBackend.spec", "README.md", "LICENSE",
+        ".gitignore", "run.py", "ChaoxingDesktop.spec", "README.md", "LICENSE",
         "THIRD_PARTY_NOTICES.md", "UPGRADE_ACCEPTANCE.md", "REVIEWED_SUBMISSION_CONTRACT.md", "requirements.txt", "requirements-build.txt",
         "requirements-lock.txt",
         "scripts/retired-runtime-0.3.5.txt",
     )
     files = [desktop / name for name in root_files]
-    for path in (desktop / 'winui').rglob('*'):
-        if (path.is_file() and not path.is_symlink()
-                and not {'bin', 'obj', 'publish'}.intersection(path.relative_to(desktop / 'winui').parts)
-                and not any(part.startswith(('publish-', 'dev-')) or part == 'dev' for part in path.relative_to(desktop / 'winui').parts)
-                and path.suffix in {'.cs', '.xaml', '.csproj', '.manifest', '.md'}):
-            files.append(path)
     for directory, extensions in (
         ("chaoxing_desktop", {".py", ".qml"}),
         ("scripts", {".py", ".ps1", ".nsi"}),
@@ -34,7 +28,6 @@ def source_files(desktop: Path):
     files.extend(desktop / relative for relative in (
         "vendor/chaoxing/LICENSE", "vendor/chaoxing/resource/README.md",
         "vendor/chaoxing/resource/font_map_table.json",
-        "vendor/chaoxing/resource/ocr_charset.json", "vendor/chaoxing/resource/OCR-LICENSE.txt",
     ))
     return sorted(path for path in files if path.is_file() and not path.is_symlink())
 

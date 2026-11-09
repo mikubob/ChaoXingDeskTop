@@ -31,12 +31,6 @@ def retired_runtime_files():
     return paths
 
 
-def installer_copy_ignore(directory, names):
-    """Keep debugging symbols outside the installed runtime payload."""
-    return [name for name in names
-            if Path(name).suffix.lower() == '.pdb' and (Path(directory) / name).is_file()]
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--app", type=Path, required=True)
@@ -57,7 +51,7 @@ def main():
     verify_build(ROOT, app)
     output.mkdir(parents=True, exist_ok=True)
     stage = ROOT / "build" / ("installer-stage-" + uuid.uuid4().hex[:12])
-    shutil.copytree(app, stage, ignore=installer_copy_ignore)
+    shutil.copytree(app, stage)
     for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "requirements-lock.txt"):
         shutil.copy2(ROOT / name, stage / name)
     profile = f"installer-{__version__.replace('.', '_')}-{uuid.uuid4().hex[:16]}"

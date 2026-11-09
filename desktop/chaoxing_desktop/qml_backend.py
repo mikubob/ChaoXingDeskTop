@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
-from .file_dialogs import FileDialogs as QFileDialog
+from PySide6.QtWidgets import QFileDialog
 
 from . import __version__
 from .answers import option_pairs, plain_text, question_images
@@ -33,20 +33,12 @@ from .course_progress import CourseProgressCache, progress_key, valid_progress
 
 
 class Backend(QObject):
-    # Native frontends replace these adapters; business operations stay shared.
-    file_dialogs = QFileDialog
-
-    def copy_text(self, text):
-        from PySide6.QtGui import QGuiApplication
-        QGuiApplication.clipboard().setText(text)
-
     changed = Signal()
     busyChanged = Signal()
     configChanged = Signal()
     inputChanged = Signal()
     providersChanged = Signal()
     coursesChanged = Signal()
-    coursesLoaded = Signal()
     pageRequested = Signal(int)
     questionsReset = Signal()
     startConfirmationRequested = Signal(str)
@@ -207,7 +199,8 @@ class Backend(QObject):
     @Slot(str)
     def releaseAction(self, action):
         if action == 'copy':
-            self.copy_text(verification_info())
+            from PySide6.QtGui import QGuiApplication
+            QGuiApplication.clipboard().setText(verification_info())
             self.feedback('release', '版本与校验说明已复制；不含账号、凭据或数据目录。', 'success')
         elif action in RELEASE_URLS:
             from PySide6.QtGui import QDesktopServices
@@ -397,7 +390,6 @@ class Backend(QObject):
                     mode=self.mode, demo=self.demo_mode, courseCount=len(self.courses),
                     selectedCount=len(self.selected), hiddenCount=hidden,
                     courseSearch=self.search,
-                    coursesReady=self.course_identity is not None,
                     total=total, success=counts["success"], pending=counts["pending"] + counts["processed"],
                     failed=counts["failed"], progress=round(100 * sum(counts[s] for s in TERMINAL) / total) if total else 0,
                     saveState=self.save_state, aiStatus=self.ai_status,
@@ -584,10 +576,11 @@ class Backend(QObject):
                 raise ValueError('存在未进入副本的超容量／非法输入，请先修正后再复制／导出。')
             text = export_text(self._draft)
             if clipboard:
-                self.copy_text(text)
+                from PySide6.QtGui import QGuiApplication
+                QGuiApplication.clipboard().setText(text)
                 self.feedback('draft', '人工编辑副本已复制，未触发提交。', 'success')
             else:
-                name, _ = self.file_dialogs.getSaveFileName(None, '导出人工编辑副本（含正文，仅供自行保管）', 'draft-copy.txt', '文本 (*.txt)')
+                name, _ = QFileDialog.getSaveFileName(None, '导出人工编辑副本（含正文，仅供自行保管）', 'draft-copy.txt', '文本 (*.txt)')
                 if name:
                     atomic_write(Path(name), text.encode('utf-8'))
                     self.feedback('draft', '编辑副本已导出，包含正文；未触发提交。', 'success')
@@ -981,7 +974,7 @@ class Backend(QObject):
             self.config['common'].update(username=row['username'], password='',
                                          use_cookies='true' if self.cookie_path().exists() else 'false')
             self.reset_account_view()
-            self.notify('已切换到 ' + row['label'] + '，选择登录方式进入该账号课程。')
+            self.notify('已切换到 ' + row['label'] + '，点击「登录并读取」获取该账号课程。')
         self.execute(run)
 
     @Slot(str)
@@ -1287,9 +1280,10 @@ class Backend(QObject):
 
     @Slot(str)
     def copyActivity(self, record_id):
+        from PySide6.QtGui import QGuiApplication
         record = self._activity_model.detail(record_id)
         if record:
-            self.copy_text(record['detailText'])
+            QGuiApplication.clipboard().setText(record['detailText'])
             self.feedback('record', '活动逐题草稿已复制。', 'success')
 
     @Slot(str)
@@ -1337,9 +1331,10 @@ class Backend(QObject):
 
     @Slot(str)
     def copyDiscussion(self, record_id):
+        from PySide6.QtGui import QGuiApplication
         record = self._discussion_model.detail(record_id)
         if record.get('content'):
-            self.copy_text(record['content'])
+            QGuiApplication.clipboard().setText(record['content'])
             self.feedback('record', '讨论正文已复制。', 'success')
 
     @Slot()
@@ -1370,7 +1365,7 @@ class Backend(QObject):
             from .declarative import TEMPLATE, validate_definition, preview_definition
             import json
             if action == 'import':
-                name, _ = self.file_dialogs.getOpenFileName(None, '导入声明式 JSON（不执行 handler）', '', 'JSON (*.json)')
+                name, _ = QFileDialog.getOpenFileName(None, '导入声明式 JSON（不执行 handler）', '', 'JSON (*.json)')
                 if not name:
                     return
                 with Path(name).open('rb') as source:
@@ -1384,7 +1379,7 @@ class Backend(QObject):
             else:
                 text = self.config['question_bank']['declarative_definition']
                 definition = validate_definition(text) if text.strip() else TEMPLATE
-                name, _ = self.file_dialogs.getSaveFileName(None, '导出不含 Token 的 JSON 模板', 'question-bank.json', 'JSON (*.json)')
+                name, _ = QFileDialog.getSaveFileName(None, '导出不含 Token 的 JSON 模板', 'question-bank.json', 'JSON (*.json)')
                 if name:
                     Path(name).write_text(json.dumps(definition, ensure_ascii=False, indent=2), encoding='utf-8')
         self.execute(run)
@@ -1623,7 +1618,6 @@ class Backend(QObject):
             self.courses = event["courses"]
             self.demo_mode = event.get("demo", False)
             self.course_identity = self.identity()
-            self.coursesLoaded.emit()
             self.load_course_progress()
             self.coursesChanged.emit()
             self.mode = "离线演示 · 示例数据" if self.demo_mode else "课程已读取"
@@ -1794,7 +1788,7 @@ class Backend(QObject):
     def discardAndClose(self):
         return self._close(True)
 
-    def _prepare_close(self, discard):
+    def _close(self, discard):
         if self._closed:
             return True
         # Validate/save before stopping, so a failed save preserves the live window.
@@ -1807,13 +1801,6 @@ class Backend(QObject):
                 self.save_state = "保存失败 · 未保存"
                 self.notify(exc, "danger")
                 return False
-        return True
-
-    def _close(self, discard):
-        if self._closed:
-            return True
-        if not self._prepare_close(discard):
-            return False
         self.stop()
         self.cancel_course_progress()
         if self._course_controller.active:
@@ -1839,7 +1826,7 @@ class Backend(QObject):
         def run():
             if action in ("import_config", "import_cookie"):
                 title = "导入 INI 配置" if action == "import_config" else "导入 Cookie（name=value; 格式）"
-                name, _ = self.file_dialogs.getOpenFileName(None, title, "", "配置 / 文本 (*.ini *.txt);;所有文件 (*)")
+                name, _ = QFileDialog.getOpenFileName(None, title, "", "配置 / 文本 (*.ini *.txt);;所有文件 (*)")
                 if not name:
                     return
                 text = Path(name).read_text(encoding="utf-8-sig")
@@ -1870,7 +1857,7 @@ class Backend(QObject):
                 self.reset_account_view()
                 self.notify("当前账号的本机 Cookie 已清除，其他账号会话已保留。")
             elif action == 'export_diagnostics':
-                name, _ = self.file_dialogs.getSaveFileName(None, '导出排障配置（不含凭据）', 'diagnostics.ini', 'INI (*.ini)')
+                name, _ = QFileDialog.getSaveFileName(None, '导出排障配置（不含凭据）', 'diagnostics.ini', 'INI (*.ini)')
                 if name:
                     atomic_write(Path(name), diagnostic_config(self.config).encode('utf-8'))
                     self.notify('排障配置已导出；仅包含策略与版本，不含会话或内容。', 'success')
@@ -1878,7 +1865,7 @@ class Backend(QObject):
                 is_config = action == "export_config"
                 if is_config:
                     validate(self.config)
-                name, _ = self.file_dialogs.getSaveFileName(None, "导出完整 INI（包含密码与密钥）" if is_config else "导出已脱敏日志", "config.ini" if is_config else "chaoxing-desktop.log", "INI (*.ini)" if is_config else "日志 (*.log)")
+                name, _ = QFileDialog.getSaveFileName(None, "导出完整 INI（包含密码与密钥）" if is_config else "导出已脱敏日志", "config.ini" if is_config else "chaoxing-desktop.log", "INI (*.ini)" if is_config else "日志 (*.log)")
                 if name:
                     atomic_write(Path(name), (serialize(self.config) if is_config else self.redact(self.log_redactor("\n".join(self.logs)))).encode('utf-8'))
                     self.notify("文件已导出。", "success")
@@ -1892,7 +1879,7 @@ class Backend(QObject):
     def chooseLogDirectory(self):
         if self.busy:
             return
-        directory = self.file_dialogs.getExistingDirectory(None, "选择日志保存目录", self.summary['logDirectory'])
+        directory = QFileDialog.getExistingDirectory(None, "选择日志保存目录", self.summary['logDirectory'])
         if directory:
             self.setValue('logging', 'directory', directory)
 

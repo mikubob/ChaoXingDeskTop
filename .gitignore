@@ -10,11 +10,6 @@
 **/.venv-ci/
 **/build/
 **/dist/
-**/bin/
-**/obj/
-/desktop/winui/publish/
-/desktop/winui/publish-*/
-/desktop/winui/dev*/
 **/__pycache__/
 **/.pytest_cache/
 **/.ruff_cache/

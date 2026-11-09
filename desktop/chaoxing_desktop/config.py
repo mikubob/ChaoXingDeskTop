@@ -310,6 +310,6 @@ class Redactor:
     def __call__(self, text: str) -> str:
         for secret in self.secrets:
             text = text.replace(secret, "[已隐藏]")
-        text = re.sub(r"(?i)\b(?:Cookie\s*[:=]|Cookie\s+(?=[^\s=;]+\s*=)|Authorization\s*[:= ]|Bearer\s*[:= ]).*", "[会话信息已隐藏]", text)
+        text = re.sub(r"(?i)(?:Cookie|Authorization|Bearer)\s*[:= ].*", "[会话信息已隐藏]", text)
         text = re.sub(r"(?i)((?:token|password|api_key|key|_uid|UID|fid|cpi|enc|jtoken|dtoken)=)[^\s&;,]+", r"\1[已隐藏]", text)
         return text
