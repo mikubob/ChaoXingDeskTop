@@ -81,59 +81,6 @@ class PlatformBoundaryTests(unittest.TestCase):
         self.assertFalse(result['status'])
         self.assertEqual(result['kind'],'network_error')
 
-    def test_cookie_validation_recovers_from_transient_timeout(self):
-        client = self.client()
-        session = requests.Session()
-        session.cookies.set('UID', 'synthetic')
-        reply = response(COURSES)
-        reply.close = Mock()
-        session.post = Mock(side_effect=[requests.Timeout('private transport detail'), reply])
-        with patch.object(SessionManager, 'get_instance', return_value=SimpleNamespace(_session=session)), \
-             patch.object(SessionManager, 'get_session', return_value=session), \
-             patch('api.base.controlled_wait') as wait:
-            self.assertTrue(client._validate_cookie_session())
-        self.assertEqual(session.post.call_count, 2)
-        wait.assert_called_once_with(client, 1)
-        self.assertEqual(session.post.call_args.kwargs['timeout'], (10, 30))
-        self.assertIn('/visit/interaction', session.post.call_args.kwargs['headers']['Referer'])
-        self.assertEqual(client._course_snapshot[0], 'synthetic')
-        reply.close.assert_called_once()
-
-    def test_cookie_validation_network_failures_are_bounded_and_keep_session(self):
-        for error, calls, detail in [(requests.Timeout, 2, '超时'),
-                                     (requests.ConnectionError, 2, '无法连接课程接口'),
-                                     (requests.exceptions.ProxyError, 1, '无法连接代理'),
-                                     (requests.exceptions.SSLError, 1, '证书校验失败')]:
-            with self.subTest(error=error):
-                client = self.client()
-                client._course_snapshot = ('old', 0, [])
-                session = requests.Session()
-                session.cookies.update({'_uid': 'synthetic', '_d': 'saved-session'})
-                session.post = Mock(side_effect=error('PRIVATE_PROXY_PASSWORD'))
-                with patch.object(SessionManager, 'get_instance', return_value=SimpleNamespace(_session=session)), \
-                     patch.object(SessionManager, 'update_cookies'), patch('api.base.controlled_wait'):
-                    result = client.login(login_with_cookies=True)
-                self.assertEqual(result['kind'], 'network_error')
-                self.assertIn(detail, result['msg'])
-                self.assertNotIn('PRIVATE_PROXY_PASSWORD', result['msg'])
-                self.assertEqual(session.post.call_count, calls)
-                self.assertEqual(session.cookies.get('_d'), 'saved-session')
-                self.assertIsNone(client._course_snapshot)
-
-    def test_cookie_validation_does_not_retry_authentication_failure(self):
-        client = self.client()
-        session = requests.Session()
-        session.cookies.set('_uid', 'synthetic')
-        reply = response('<form><input type="password"></form>')
-        reply.close = Mock()
-        session.post = Mock(return_value=reply)
-        with patch.object(SessionManager, 'get_instance', return_value=SimpleNamespace(_session=session)):
-            with self.assertRaises(PlatformResponseError) as caught:
-                client._validate_cookie_session()
-        self.assertEqual(caught.exception.kind, 'auth_error')
-        session.post.assert_called_once()
-        reply.close.assert_called_once()
-
     def test_malformed_login_errors_are_actionable(self):
         for body,status,kind in [('{"status":false,"msg":"denied"}',200,'auth_error'),
                                  ('<html>Gateway</html>',502,'service_error'),

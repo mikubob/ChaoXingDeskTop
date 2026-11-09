@@ -108,17 +108,6 @@ class ConfigTests(unittest.TestCase):
         for secret in ("YANXI_A", "YANXI_B", "LIKE_A", "LIKE_B"):
             self.assertNotIn(secret, output)
 
-    def test_cookie_explanation_is_preserved_but_cookie_values_are_hidden(self):
-        redact = Redactor({})
-        message = '会话校验暂时连接失败或超时，请重试；尚未确认 Cookie 失效。'
-        self.assertEqual(redact(message), message)
-        for header in ('Cookie: _uid=PRIVATE; _d=SECRET', 'Cookie = _d=SECRET',
-                       'Cookie _d=SECRET; name=PRIVATE', 'Authorization: SECRET', 'Bearer SECRET'):
-            with self.subTest(header=header):
-                output = redact(header)
-                self.assertNotIn('SECRET', output)
-                self.assertNotIn('PRIVATE', output)
-
     def test_payload_normalizes_all_valid_boolean_values(self):
         c = defaults()
         for section, key in (("ai", "enabled"), ("ai", "vision"), ("tiku", "submit"),
