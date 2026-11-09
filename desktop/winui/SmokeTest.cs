@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System.Text.Json.Nodes;
@@ -20,6 +22,17 @@ public sealed partial class MainWindow
     {
         var deadline = DateTime.UtcNow.AddSeconds(seconds);
         while (!predicate()) { if (DateTime.UtcNow > deadline) throw new TimeoutException($"离线界面验收超时：step={smokeStep}, page={Navigation.SelectedIndex}, ready={CoursesReady}, coursesShown={showingMyCourses}, pending={coursesLoadedPending}, animations={contentAnimations.Count}, busy={Busy}, message={J.S(Summary, "message")}。"); await Task.Delay(50); }
+    }
+
+    /// <summary>Perform a real control click through the automation invoke pattern.</summary>
+    private static async Task Click(Button button)
+    {
+        var peer = FrameworkElementAutomationPeer.CreatePeerForElement(button)
+                   ?? new ButtonAutomationPeer(button);
+        if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
+            throw new InvalidOperationException("续跑按钮无法通过界面自动化点击。");
+        invoke.Invoke();
+        await Task.CompletedTask;
     }
     private async Task RunSmoke()
     {
@@ -121,6 +134,7 @@ public sealed partial class MainWindow
             if (J.I(Summary, "total") == 0) throw new InvalidOperationException("章节任务没有同步。");
             await CheckMonitorStability();
             await CheckRecordDetails();
+            await CheckResumeEntry();
             var discussion = J.A(backend.State["discussions"]).FirstOrDefault();
             if (discussion != null)
             {
@@ -510,6 +524,65 @@ public sealed partial class MainWindow
             }
         }
         finally { currentDialog?.Hide(); await draft; backend.State["uiFeedback"] = originalFeedback; backend.State["draftEditable"] = originalEditable; }
+    }
+
+    private async Task CheckResumeEntry()
+    {
+        // Issue #5 entry: one real control tree, one real summary source.
+        Navigation.SelectedIndex = 4;
+        await WaitFor(() => !contentAnimations.ContainsKey(PageHost));
+        var summary = (JsonObject)Summary!;
+        if (!summary.ContainsKey("resumeScoped")) throw new InvalidOperationException("后台未提供续跑状态字段。");
+        var card = VisualChild<Border>(pages[4], "ResumeCard") ?? throw new InvalidOperationException("任务工作区缺少续跑卡片。");
+        var button = VisualChild<Button>(pages[4], "ResumeButton") ?? throw new InvalidOperationException("任务工作区缺少「继续上次任务」按钮。");
+        if (VisualChild<TextBlock>(pages[4], "ResumeHint") is not { } hint) throw new InvalidOperationException("续跑入口缺少范围说明。");
+        // Nothing was stopped yet, so the entry must be genuinely hidden.
+        if (card.Visibility != Visibility.Collapsed || button.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("没有停止记录时仍显示续跑入口。");
+
+        // Drive the real offline flow: demo courses, a real run, a real stop,
+        // then a real continuation. No summary field is written by this test.
+        // A fresh demo load keeps the preceding steps' run state untouched.
+        await Call("loadDemo");
+        await WaitFor(() => J.B(Summary, "coursesReady") && !J.B(Summary, "busy"), 30000);
+        await Call("selectVisible", true);
+        await Call("startTasks");
+        await WaitFor(() => J.B(Summary, "busy"), 30000);
+        if (J.B(Summary, "resumeScoped")) throw new InvalidOperationException("运行中不应出现续跑入口。");
+        await WaitFor(() => J.I(Summary, "total") > 0 && J.I(Summary, "success") > 0, 60000);
+        await Call("stop");
+        await WaitFor(() => !J.B(Summary, "busy"), 60000);
+
+        var resume = Summary?["resume"];
+        if (!J.B(Summary, "resumeScoped") || !J.B(resume, "available"))
+            throw new InvalidOperationException("显式停止后没有留下可继续的任务：" + J.S(resume, "reason"));
+        if (J.I(resume, "taskCount") <= 0)
+            throw new InvalidOperationException("续跑入口没有保留原任务点范围。");
+        Root.UpdateLayout();
+        if (card.Visibility != Visibility.Visible || button.Visibility != Visibility.Visible)
+            throw new InvalidOperationException("显式停止后续跑入口仍不可见。");
+        if (hint.Text.Length == 0) throw new InvalidOperationException("续跑入口没有显示原范围说明。");
+        // Clickable is the real requirement: a pending write confirmation must
+        // remain reachable, so enabled follows clickable, not readiness.
+        if (J.B(resume, "clickable") != button.IsEnabled)
+            throw new InvalidOperationException("续跑按钮可点击状态与后台不一致。");
+        if (!button.IsEnabled) throw new InvalidOperationException("满足条件后续跑入口仍被禁用。");
+
+        int before = J.I(Summary, "success"), total = J.I(Summary, "total");
+        // The real command, through the same click the user performs.
+        await Click(button);
+        await WaitFor(() => J.B(Summary, "busy"), 30000);
+        await WaitFor(() => J.I(Summary, "total") > 0, 30000);
+        await WaitFor(() => !J.B(Summary, "busy"), 90000);
+        if (J.I(Summary, "success") <= before || J.I(Summary, "total") != total)
+            throw new InvalidOperationException("续跑没有在原章节范围内继续推进。");
+        // The continuation is consumed; only a new stop may create another.
+        if (J.B(Summary, "resumeScoped"))
+            throw new InvalidOperationException("续跑完成后仍保留旧入口。");
+        Root.UpdateLayout();
+        if (card.Visibility != Visibility.Collapsed || button.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("清空续跑状态后入口未隐藏。");
+        await Task.CompletedTask;
     }
 
     private async Task CheckRecordDetails()

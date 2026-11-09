@@ -45,6 +45,7 @@ def create_client(config, channel, courses_only=False):
             channel.send('media', id=task_id, **values)
     client.desktop_media_progress = media_progress
     client.desktop_record_cards = lambda **values: channel.send('record_card_hint', **values)
+    client.desktop_job_scope = lambda **values: channel.send('job_scope', **values)
     return client
 
 
@@ -88,13 +89,13 @@ def process_job(client, course, job, info, speed):
     return StudyResult.ERROR
 
 
-def process_chapter(client, course, point, speed, task_id=None):
+def process_chapter(client, course, point, speed, task_id=None, allowed_jobs=None):
     context = getattr(client, 'desktop_media_context', None)
     if context is not None:
         context.task_id = task_id
         context.chapter = point.get('title', '')
     try:
-        return _process_chapter(client, course, point, speed)
+        return _process_chapter(client, course, point, speed, allowed_jobs)
     finally:
         if context is not None:
             context.task_id = None
@@ -103,19 +104,52 @@ def process_chapter(client, course, point, speed, task_id=None):
             context.media_total = 1
 
 
-def _process_chapter(client, course, point, speed):
+def job_identity(job):
+    job_id = str(job.get('jobid') or '').strip()
+    resource_id = str(job.get('objectid') or job.get('mid') or job.get('liveId') or '').strip()
+    if job_id or resource_id:
+        return (job['type'], job_id, resource_id)
+
+
+def _process_chapter(client, course, point, speed, allowed_jobs=None):
     if point.get("has_finished"):
         return ChapterResult.SUCCESS
     jobs, info = client.get_job_list(course, point)
     if info.get("notOpen"):
         return ChapterResult.NOT_OPEN
-    hint = getattr(client, 'desktop_record_cards', None)
     task_id = getattr(getattr(client, 'desktop_media_context', None), 'task_id', None)
+    if allowed_jobs is not None:
+        # A chapter that was already scanned before the stop keeps exactly the
+        # task points that existed then; newly added ones stay out.
+        wanted = {tuple(row) for row in allowed_jobs}
+        kept, unidentified = [], 0
+        for job in jobs:
+            identity = job_identity(job)
+            if identity is not None and identity in wanted:
+                kept.append(job)
+            elif identity is None:
+                # No stable id: this job cannot be proven to be part of the
+                # stopped scope, so it is skipped and reported instead of
+                # being matched loosely.
+                unidentified += 1
+        dropped = len(jobs) - len(kept)
+        if dropped:
+            logger.warning('续跑：章节「{}」有 {} 个任务点不在原范围内（含缺少稳定标识的 {} 个），本轮不处理。',
+                           point.get('title', ''), dropped, unidentified)
+        jobs = kept
+    hint = getattr(client, 'desktop_record_cards', None)
     if hint and task_id:
         indices = {str(j.get('_job_info', {}).get('card_index', '')) for j in jobs
                    if j.get('type') in ('discussion', 'activity')}
         if indices and all(i.isdigit() and 0 <= int(i) < 64 for i in indices):
             hint(id=task_id, indices=sorted({int(i) for i in indices}))
+    observe = getattr(client, 'desktop_job_scope', None)
+    if observe and task_id:
+        # Record what this chapter contains so a later continuation can keep
+        # the same set of task points instead of adopting new ones. Jobs with no
+        # stable identity are not recorded: they could never be matched safely.
+        observe(id=task_id, jobs=[list(identity) for identity in map(job_identity, jobs)
+                                  if identity is not None])
     title = point.get('title', point.get('id', ''))
     logger.info('章节「{}」检测到 {} 个待处理任务点。', title, len(jobs))
     # A chapter may contain several independent media. One unconfirmed job
@@ -124,6 +158,9 @@ def _process_chapter(client, course, point, speed):
     media_total = sum(j.get('type') in ('video', 'audio') for j in jobs)
     media_index = 0
     for index, job in enumerate(jobs):
+        # A resumed run must obey pause/cancel between task points, not only
+        # between chapters, so it never reports work it is not allowed to do.
+        checkpoint(client)
         if job.get('type') in ('video', 'audio'):
             media_index += 1
             context = getattr(client, 'desktop_media_context', None)
@@ -150,6 +187,12 @@ def _process_chapter(client, course, point, speed):
             logger.warning('会话需要人工验证，章节「{}」保留待完成；还有 {} 个任务点未执行。',
                            title, len(jobs) - index - 1)
             return ChapterResult.PENDING
+        if result == StudyResult.PENDING:
+            # Unknown submission or unverifiable state: report as pending, never
+            # as a completed chapter.
+            logger.warning('任务点「{}」需要人工核验，章节保留待完成。', name)
+            outcome = ChapterResult.PENDING
+            continue
         if result in (StudyResult.FORBIDDEN, StudyResult.TIMEOUT):
             logger.warning('任务点「{}」未获平台确认（{}），继续处理本章其他任务点。', name, result.name)
             outcome = ChapterResult.PENDING

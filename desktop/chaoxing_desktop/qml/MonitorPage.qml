@@ -61,6 +61,8 @@ ColumnLayout {
                 }
                 RowLayout {
                     Layout.fillWidth: true
+                    ActionButton { objectName: "resume_button"; text: "继续上次任务"; visible: !!workbenchSummary.resumeScoped; enabled: !!workbenchSummary.resumeScoped && workbenchSummary.resume.enabled && !workbenchSummary.busy; onClicked: bridge.resumeTasks() }
+                    Text { visible: !!workbenchSummary.resumeScoped; text: workbenchSummary.resume.reason || ""; color: "#627086"; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
                     ActionButton { objectName: "history_button"; text: "运行摘要"; onClicked: { bridge.loadRunHistory(); history.open() } }
                     ActionButton { objectName: "recovery_button"; text: "从摘要选课…"; enabled: !workbenchSummary.busy; onClicked: { bridge.clearUiFeedback("recovery"); bridge.loadRunHistory(); recovery.open() } }
                     ActionButton { objectName: "saved_drafts_button"; text: "本地副本…"; enabled: !workbenchSummary.busy; onClicked: { bridge.clearUiFeedback("savedDrafts"); savedDrafts.rows = bridge.listDraftCopies(); savedDrafts.open() } }

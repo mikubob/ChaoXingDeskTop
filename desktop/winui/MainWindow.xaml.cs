@@ -188,6 +188,22 @@ public sealed partial class MainWindow : Window
     private async void Save(object sender, RoutedEventArgs e) => await Call("save");
     private async void Pause(object sender, RoutedEventArgs e) => await Call("pause");
     private async void Stop(object sender, RoutedEventArgs e) => await Call("stop");
+    internal async Task ResumeLastRunAsync()
+    {
+        // The summary is the only source of truth, and the backend re-checks
+        // stop/identity/scope at call time. When the write policy needs
+        // confirmation the backend emits startConfirmationRequested and nothing
+        // starts until the user agrees, so this must stay clickable.
+        var state = Summary?["resume"];
+        if (!J.B(Summary, "resumeScoped") || !J.B(state, "available"))
+        {
+            Error(J.S(state, "reason", "当前没有可继续的任务。"));
+            return;
+        }
+        try { await Call("resumeTasks"); }
+        catch (Exception e) { Error(e.Message); return; }
+        Navigation.SelectedIndex = 4;
+    }
     private void ShowRelease(object sender, RoutedEventArgs e) => EnqueueDialog(async () => await ShowText("版本、发行说明与校验信息", J.S(backend.State, "releaseInfo"), Row(Button("检查版本网页…", async () => await Call("releaseAction", "latest")), Button("发行说明…", async () => await Call("releaseAction", "notes")), Button("复制校验说明", async () => await Call("releaseAction", "copy")))));
 
     private async void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)

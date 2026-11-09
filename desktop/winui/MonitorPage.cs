@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace ChaoxingDesktop;
@@ -28,7 +29,10 @@ public sealed partial class MainWindow
         var progress = new ProgressBar { Height = 6 };
         refreshers.Add(() => progress.Value = J.I(Summary, "progress"));
         var tasks = new Grid { RowSpacing = 12 };
-        tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); tasks.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        tasks.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var verifyChapters = Button("核验章节", async () => await Call("verifyPending"), true);
         verifyChapters.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         ToolTipService.SetToolTip(verifyChapters, "只读检查待完成章节的平台进度");
@@ -44,6 +48,36 @@ public sealed partial class MainWindow
         var verification = Row(verifyChapters, verifyRecords, more);
         var records = Row(Button("运行摘要", () => { EnqueueDialog(ShowHistory); return Task.CompletedTask; }),
             Button("人工副本", () => { EnqueueDialog(ShowSavedDrafts); return Task.CompletedTask; }));
+        var resume = Button("继续上次任务", ResumeLastRunAsync);
+        resume.Name = "ResumeButton";
+        AutomationProperties.SetName(resume, "继续上次任务");
+        var resumeHint = Text("", 12, true);
+        resumeHint.Name = "ResumeHint";
+        var resumeCard = new Border
+        {
+            Background = ThemeBrush("BannerBrush"), BorderBrush = ThemeBrush("BorderBrush"),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14),
+            Child = Column(Text("继续上次任务", 15), resumeHint, resume),
+        };
+        // Visibility is driven on the button itself so the smoke test and the
+        // user see one source of truth: a collapsed parent would leave the
+        // child's own Visibility state untouched and unobservable.
+        resumeCard.Name = "ResumeCard";
+        refreshers.Add(() =>
+        {
+            var state = Summary?["resume"];
+            bool available = J.B(Summary, "resumeScoped") && J.B(state, "available");
+            resumeCard.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+            resume.Visibility = resumeCard.Visibility;
+            // Clickable whenever a continuation can be requested: a pending
+            // write confirmation must still be reachable, otherwise that gate
+            // can never open. Only busy/invalid states disable the control.
+            resume.IsEnabled = available && J.B(state, "enabled");
+            string scope = J.S(state, "scope");
+            resumeHint.Text = available
+                ? (scope.Length > 0 ? "原范围：" + scope + "\n" : "") + J.S(state, "reason")
+                : "";
+        });
         var tools = new Grid { ColumnSpacing = 24, RowSpacing = 10, ChildrenTransitions = LayoutTransitions() };
         tools.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         tools.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -60,7 +94,10 @@ public sealed partial class MainWindow
             records.HorizontalAlignment = narrow ? HorizontalAlignment.Left : HorizontalAlignment.Right;
         }
         tools.SizeChanged += (_, _) => ArrangeTools(); ArrangeTools();
-        tasks.Children.Add(tools); tasks.Children.Add(progress); Grid.SetRow(progress, 1); tasks.Children.Add(taskList); Grid.SetRow(taskList, 2);
+        var resumeRow = new Grid();
+        resumeRow.Children.Add(resumeCard);
+        tasks.Children.Add(tools); tasks.Children.Add(resumeRow); tasks.Children.Add(progress);
+        Grid.SetRow(resumeRow, 1); Grid.SetRow(progress, 2); tasks.Children.Add(taskList); Grid.SetRow(taskList, 3);
         var tabs = Tabs(("章节任务", tasks), ("逐题结果", FilteredResults("questions")), ("讨论记录", FilteredResults("discussions")), ("投票／问卷", FilteredResults("activities")), ("需处理", FilteredResults("attention")));
         var logSearch = new TextBox { PlaceholderText = "搜索当前保留日志", Width = 250 };
         var level = new ComboBox { ItemsSource = new[] { "全部级别", "警告及错误", "仅错误" }, SelectedIndex = 0, Width = 145 };

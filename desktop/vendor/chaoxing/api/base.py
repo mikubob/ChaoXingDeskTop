@@ -63,6 +63,14 @@ def resource_failure(error):
     return StudyResult.ERROR
 
 
+WORK_SUBMIT_URL = "https://mooc1.chaoxing.com/mooc-ans/work/addStudentWorkNew"
+
+
+def _work_id(job, form):
+    value = str(form.get("workId") or form.get("workRelationId") or job.get("jobid") or "").strip()
+    return value[5:] if value[:5].lower() == "work-" else value
+
+
 class SessionManager:
     _instance = None
     _instance_lock = threading.Lock()
@@ -81,6 +89,7 @@ class SessionManager:
         # Chapter retries already own recovery; avoid multiplying them by ten.
         self._session.mount("https://", HTTPAdapter(max_retries=1))
         self._session.mount("http://", HTTPAdapter(max_retries=1))
+        self._session.mount(WORK_SUBMIT_URL, HTTPAdapter(max_retries=0))
         from chaoxing_desktop.http import platform_request
         self._session.request = functools.partial(platform_request, self._session, self._session.request)
         self._session.max_redirects = 5
@@ -149,6 +158,7 @@ class StudyResult(Enum):
     ERROR = 2
     TIMEOUT = 3
     VERIFICATION_REQUIRED = 4
+    PENDING = 5  # Needs human confirmation; never a platform success.
 
     def is_failure(self):
         return self != StudyResult.SUCCESS
@@ -255,6 +265,10 @@ def normalize_answer_text(ans) -> str:
 
 
 class Chaoxing:
+    # Set by chaoxing_desktop.runtime when a durable quiz-attempt store exists.
+    # None keeps adapter-only tests and the historical behaviour unchanged.
+    desktop_quiz_guard = None
+
     def __init__(self, account: Account = None, tiku: Tiku = None, **kwargs):
         self.account = account
         self.cipher = AESCipher()
@@ -868,6 +882,29 @@ class Chaoxing:
         logger.warning('资源任务接口未确认成功，保留待核验。')
         return StudyResult.ERROR
 
+    def _post_work_once(self, session, form):
+        return session.post(
+            WORK_SUBMIT_URL,
+            data=form,
+            headers={
+                "Host": "mooc1.chaoxing.com",
+                "sec-ch-ua-platform": '"Windows"',
+                "X-Requested-With": "XMLHttpRequest",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "sec-ch-ua": '"Microsoft Edge";v="129", "Not=A?Brand";v="8", "Chromium";v="129"',
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "sec-ch-ua-mobile": "?0",
+                "Origin": "https://mooc1.chaoxing.com",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,ja;q=0.5",
+            },
+            allow_redirects=False,
+            timeout=(10, 20),
+        )
+
     def study_work(self, _course, _job, _job_info) -> StudyResult:
         checkpoint(self)
         if self.tiku.DISABLE or not self.tiku:
@@ -932,6 +969,7 @@ class Chaoxing:
         query_delay = self.kwargs.get("query_delay", 0)
         feedback_history = None
         last_submitted_score = None
+        guard = self.desktop_quiz_guard
 
         for attempt in range(max_retries + 1):
             checkpoint(self)
@@ -954,6 +992,13 @@ class Chaoxing:
                 else:
                     logger.error(f"获取章节检测题目失败, 达到最大重试次数: {e}")
                 return StudyResult.ERROR
+
+            work = _work_id(_job, questions)
+            if guard is not None and attempt == 0:
+                blocked = guard.unresolved(_course, work)
+                if blocked:
+                    logger.warning(blocked)
+                    return StudyResult.PENDING
 
             # 2. 设置上一轮错误反馈（供AI重新作答时参考）
             if feedback_history and hasattr(self.tiku, 'set_work_feedback'):
@@ -1071,25 +1116,21 @@ class Chaoxing:
 
             # 4. 提交
             checkpoint(self)
-            res = _session.post(
-                "https://mooc1.chaoxing.com/mooc-ans/work/addStudentWorkNew",
-                data=questions,
-                headers={
-                    "Host": "mooc1.chaoxing.com",
-                    "sec-ch-ua-platform": '"Windows"',
-                    "X-Requested-With": "XMLHttpRequest",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0",
-                    "Accept": "application/json, text/javascript, */*; q=0.01",
-                    "sec-ch-ua": '"Microsoft Edge";v="129", "Not=A?Brand";v="8", "Chromium";v="129"',
-                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                    "sec-ch-ua-mobile": "?0",
-                    "Origin": "https://mooc1.chaoxing.com",
-                    "Sec-Fetch-Site": "same-origin",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Dest": "empty",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,ja;q=0.5",
-                },
-            )
+            submitting = questions["pyFlag"] == ""
+            if guard is not None and submitting:
+                # The intent must survive a kill between this POST and its
+                # response, so it never depends on in-memory worker state.
+                # The real retry index decides whether this is the explicitly
+                # configured same-run redo; anything else fails closed here,
+                # before a single byte leaves the machine.
+                guard.start(_course, work, redo=attempt > 0)
+            try:
+                res = self._post_work_once(_session, questions)
+            except requests.RequestException:
+                if guard is None or not submitting:
+                    raise
+                logger.warning('章节测验提交结果未知，请在平台人工核验。')
+                return StudyResult.PENDING
             if res.status_code == 200:
                 try:
                     res_json = res.json()
@@ -1097,15 +1138,27 @@ class Chaoxing:
                         raise ValueError
                 except (ValueError, TypeError):
                     logger.error('答题保存／提交响应不可读，平台结果未确认；答案采用不代表平台保存成功')
-                    return StudyResult.ERROR
+                    return StudyResult.ERROR if not submitting else StudyResult.PENDING
                 if res_json['status']:
-                    logger.info(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题成功 -> {res_json.get("msg", "平台已确认")}')
+                    if guard is not None and submitting:
+                        # Keep proof of acceptance: a stop between this response
+                        # and the completion cache must not allow a resend in a
+                        # later continuation. Only an explicit rejection clears.
+                        guard.settle(_course, work, stored=True)
+                    logger.info(f'{"提交" if submitting else "保存"}答题成功 -> {res_json.get("msg", "平台已确认")}')
                 else:
-                    logger.error(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题失败 -> {res_json.get("msg", "平台拒绝")}')
+                    logger.error(f'{"提交" if submitting else "保存"}答题失败 -> {res_json.get("msg", "平台拒绝")}')
+                    if guard is not None and submitting:
+                        # An explicit rejection is the only answer that proves
+                        # nothing was stored, so it may clear the record.
+                        guard.settle(_course, work, stored=False)
                     return StudyResult.ERROR
             else:
-                logger.error(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题失败 -> {res.text}')
-                return StudyResult.ERROR
+                logger.error(f'{"提交" if submitting else "保存"}答题失败 -> {res.text}')
+                # 4xx does not prove the platform kept no attempt (timeouts,
+                # gateway pages, replay protection all differ per platform), so
+                # only an explicit 200+status answer settles the intent.
+                return StudyResult.ERROR if not submitting else StudyResult.PENDING
 
             # 5. 若只是保存未提交，无法判断成绩，保持原有行为
             if questions["pyFlag"] == "1":
@@ -1168,11 +1221,7 @@ class Chaoxing:
             {"all_correct": bool, "feedback": list[str], "score": float, "times": int}
             或 None（无法获取成绩详情时返回 None）
         """
-        work_id = str(
-            questions.get("workId", "")
-            or questions.get("workRelationId", "")
-            or _job["jobid"].replace("work-", "")
-        )
+        work_id = _work_id(_job, questions)
         work_answer_id = str(questions.get("workAnswerId", "") or "")
         course_id = str(_course.get("courseId", ""))
         class_id = str(_course.get("clazzId", ""))

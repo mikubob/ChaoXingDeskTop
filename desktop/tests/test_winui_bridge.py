@@ -81,6 +81,18 @@ class WinUIBridgeTests(unittest.TestCase):
         self.assertIn('error', self.call('__getattribute__', 'config'))
         self.assertIn('error', self.call('on_event', {'type': 'done'}))
         self.assertTrue(self.call('save')['result'])
+        # Issue #5: the continuation state is part of the summary and the
+        # command whitelist, but internal helpers stay unreachable.
+        self.assertIn('resumeScoped', self.state['summary'])
+        self.assertIn('resume', self.state['summary'])
+        self.assertEqual(self.state['summary']['resume']['available'], False)
+        self.assertIn('error', self.call('_remember_resume'))
+        self.assertIn('error', self.call('on_finished', 0))
+        # Nothing was stopped in this session, so the command reports that and
+        # does not start a worker.
+        self.assertIsNone(self.call('resumeTasks')['result'])
+        self.wait(lambda m: '没有' in self.state['summary']['message'] or '停止' in self.state['summary']['message'])
+        self.assertFalse(self.state['summary']['busy'])
 
     def test_unicode_account_label_roundtrip(self):
         cookie = Path(self.directory.name) / 'synthetic-cookie.txt'
@@ -218,6 +230,50 @@ class BridgeStateNotificationTests(unittest.TestCase):
         self.b.changed.emit()
         self.bridge.flush()
         self.assertFalse(self.state['draftEditable'])
+
+    def test_resume_confirmation_gate_over_the_real_bridge(self):
+        """The native transport must not start a writing continuation unconfirmed."""
+        from types import SimpleNamespace
+        b = self.b
+        cookie = Path(self.directory.name) / 'bridge-cookie'
+        cookie.write_bytes(b'synthetic')
+        b.config['common'].update(username='synthetic', password='', use_cookies='true')
+        b.account_store = SimpleNamespace(active='a' * 32, rows=[], get=lambda _: dict(uid='u', label='Synthetic'),
+                                          cookie_path=lambda _: cookie)
+        b.course_identity = b.identity()
+        b.courses = [dict(courseId='c', clazzId='l', cpi='p', title='Synthetic')]
+        # Start through the real path so the launch scope is frozen, then stop.
+        b._begin('run', False, [['c', 'l']])
+        b._task_model.reset([dict(id='c:l:p1:0', title='One', course='Synthetic', status='stopped',
+                                  courseId='c', clazzId='l', pointId='p1')])
+        b.controller.active = True
+        b.controller.stopping = True
+        b.controller.active = False
+        b.controller.finished.emit(0)
+        b.controller.stopping = False
+        self.bridge.mark('summary')
+        self.bridge.flush()
+        state = self.state['summary']
+        self.assertTrue(state['resumeScoped'])
+        self.assertTrue(state['resume']['enabled'], state['resume']['reason'])
+
+        # Turning on a write policy must demand confirmation, not start. The
+        # control stays clickable so the user can actually open that gate.
+        b.config['tiku']['submit'] = 'true'
+        self.bridge.mark('summary')
+        self.bridge.flush()
+        self.assertTrue(self.state['summary']['resume']['clickable'],
+                        'a pending confirmation must still be reachable')
+        self.assertTrue(self.state['summary']['resume']['needsConfirmation'])
+        with patch.object(b.controller, 'start') as start:
+            b.resumeTasks()
+            self.bridge.flush()
+            start.assert_not_called()
+            self.assertTrue(any(m['type'] == 'event' and m['name'] == 'startConfirmationRequested'
+                                for m in self.messages))
+            b.confirmStartTasks()
+        start.assert_called_once()
+        self.assertEqual(start.call_args.args[0]['resume']['tasks'][0]['pointId'], 'p1')
 
     def test_bank_edits_expire_health_without_resending_providers(self):
         for key, value in (('go_endpoint', 'https://example.invalid/bank'),

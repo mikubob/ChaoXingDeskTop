@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -240,6 +241,69 @@ class QmlBackendTests(unittest.TestCase):
             b.fileAction("export_config")
             self.assertIn("SECRET_TO_REDACT", output.read_text(encoding="utf-8"))
             self.assertIn("custom = value", output.read_text(encoding="utf-8"))
+
+    def test_stopped_demo_run_offers_an_offline_only_continuation(self):
+        b = self.b
+        b.demo_mode = True
+        b.operation = 'run'
+        b._begin('run', True, [['demo-101', '01']])
+        b.on_event(dict(type='tasks', tasks=[dict(id='demo-101:0', course='Demo', title='t',
+                                                  courseId='demo-101', clazzId='01', pointId='0')]))
+        b.controller.active = True
+        b.controller.stopping = True
+        b.controller.active = False
+        b.on_finished(2)
+        b.controller.stopping = False
+        # The offline demo can be continued, but the retained row is marked so
+        # the relaunch stays a demo and never builds a real session.
+        state = b.resumeState
+        self.assertTrue(state['available'], state['reason'])
+        self.assertEqual(state['account'], '离线演示')
+        self.assertTrue(b._resume['demo'])
+
+    def test_resume_entry_states_and_repeat_trigger(self):
+        b = self.b
+        cookie = Path(self.directory.name) / 'synthetic-session'
+        cookie.write_bytes(b'synthetic')
+        b.config['common'].update(username='synthetic', password='', use_cookies='true')
+        b.account_store = SimpleNamespace(active='a' * 32, rows=[], get=lambda _: dict(uid='u', label='Synthetic'),
+                                         cookie_path=lambda _: cookie)
+        b.course_identity = b.identity()
+        b.courses = [dict(courseId='c', clazzId='l', cpi='p', title='Course')]
+        self.assertFalse(b.summary['resumeScoped'])
+        self.assertFalse(b.resumeState['available'])
+        # Start through the real path so the launch scope is frozen, then stop.
+        b._begin('run', False, [['c', 'l']])
+        b.on_event(dict(type='tasks', tasks=[
+            dict(id='c:l:p1:0', course='Course', title='One', status='success',
+                 courseId='c', clazzId='l', pointId='p1'),
+            dict(id='c:l:p2:1', course='Course', title='Two', status='stopped',
+                 courseId='c', clazzId='l', pointId='p2')]))
+        b.controller.active = True
+        b.controller.stopping = True
+        b.controller.active = False   # Controller._finish clears this first
+        b.on_finished(0)
+        b.controller.stopping = False
+        self.assertTrue(b.summary['resumeScoped'])
+        reason, clickable, needs_confirmation = b.resume_blocker()
+        self.assertTrue(clickable, reason)
+        self.assertFalse(needs_confirmation)
+        # A continuation only becomes legal once the controller finished; an
+        # unfinished exit is not evidence that the old worker is gone.
+        b._controller_exit = None
+        self.assertFalse(b.resume_blocker()[1])
+        b._controller_exit = 0
+        with patch.object(b.controller, 'start') as start:
+            b.resumeTasks()
+        self.assertEqual(start.call_count, 1)
+        command = start.call_args.args[0]
+        self.assertEqual(command['action'], 'run')
+        self.assertEqual(command['resume']['tasks'][0]['pointId'], 'p1')
+        self.assertEqual(command['resume']['courses'][0]['cpi'], 'p')
+        self.assertFalse(b.resumeState['enabled'])
+        with patch.object(b.controller, 'start') as start:
+            b.resumeTasks()
+            start.assert_not_called()
 
     def test_unreadable_settings_preserved_on_close(self):
         path = Path(self.directory.name) / "settings.ini"

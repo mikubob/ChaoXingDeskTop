@@ -11,7 +11,7 @@ import uuid
 from .control import RunControl, Cancelled, ResumeFailed, checkpoint, wait as controlled_wait
 from .query_result import safe_record
 
-from .config import Redactor, resource_root, select_courses
+from .config import Redactor, course_key, resource_root, select_courses
 
 
 class Channel:
@@ -114,11 +114,27 @@ def demo(channel, command):
         channel.send("courses", courses=courses, demo=True)
         return
     chosen = select_courses(courses, command.get("selected", []))
-    tasks = [dict(id=f"{c['courseId']}:{i}", course=c["title"], title=t)
+    tasks = [dict(id=f"{c['courseId']}:{i}", course=c["title"], title=t,
+                  courseId=c["courseId"], clazzId=c["clazzId"], pointId=str(i))
              for c in chosen for i, t in enumerate(("01 · 视频学习", "02 · 阅读材料", "03 · 章节练习"))]
+    resume = command.get('resume')
+    completed = set()
+    if resume is not None:
+        # Mirror the real continuation contract so the offline flow exercises
+        # the same narrowing: only the retained task ids run.
+        if (not isinstance(resume, dict) or set(resume) != {'tasks', 'courses', 'account', 'uid'}
+                or not isinstance(resume['tasks'], list)):
+            raise ValueError('续跑范围无效，请重新读取课程后手动开始。')
+        wanted = {row['taskId'] for row in resume['tasks']}
+        completed = {row['taskId'] for row in resume['tasks'] if row['completed']}
+        if wanted:
+            tasks = [task for task in tasks if task['id'] in wanted]
     channel.send("tasks", tasks=tasks)
     for task in tasks:
         checkpoint(channel)
+        if task['id'] in completed:
+            channel.send("task", id=task["id"], status="success")
+            continue
         channel.send("task", id=task["id"], status="running")
         channel.send("log", message=f"正在处理 {task['course']} / {task['title']}", level="INFO")
         if '视频' in task['title']:
@@ -239,6 +255,10 @@ def real(channel, command):
     core = load_core(channel)
     checkpoint(channel)
     account_id = command.get('account_id')
+    resume = command.get('resume')
+    if resume is not None and (not isinstance(resume, dict) or not account_id
+                               or resume.get('account') != account_id):
+        raise ValueError('续跑账号与当前会话不一致，请重新读取原账号课程。')
     verifying = command['action'] in ('verify', 'course_progress')
     if verifying and not account_id:
         raise ValueError('只读核验需要明确的账号会话。')
@@ -249,6 +269,11 @@ def real(channel, command):
         row = store.get(account_id)
         if not row or row['username'] != command['config']['common']['username']:
             raise ValueError('账号信息已改变，请重新选择账号。')
+        if resume is not None and store.active != account_id:
+            raise ValueError('续跑账号已切换，请重新读取原账号课程。')
+        if resume is not None and (not row['uid'] or resume.get('uid') != row['uid']
+                                   or command.get('account_uid') != row['uid']):
+            raise ValueError('续跑账号的平台身份已变化，请重新读取原账号课程。')
         if verifying and (not row['uid'] or command.get('account_uid') != row['uid']):
             raise ValueError('核验身份不完整或已变化，请重新读取课程。')
         if verifying and command.get('cookie_mtime_ns') != store.cookie_path(account_id).stat().st_mtime_ns:
@@ -260,7 +285,8 @@ def real(channel, command):
         raise ValueError('只读核验仅使用已读取课程的 Cookie 会话，请先重新读课。')
     if verifying:
         channel.send('verification_progress', phase='session', message='正在校验账号会话…', completed=0, total=0, reads=0, failures=0, elapsed_ms=0)
-    cx = core.create_client(command["config"], channel, courses_only=command["action"] in ('courses', 'verify', 'course_progress'))
+    cx = core.create_client(command["config"], channel,
+                            courses_only=command["action"] in ('courses', 'verify', 'course_progress'))
     checkpoint(channel)
     login = cx.login(login_with_cookies=common["use_cookies"])
     if not login.get("status"):
@@ -277,6 +303,10 @@ def real(channel, command):
             save_cookies(session)
             channel.send('session_ready', account_id=account_id, uid=uid,
                          cookie_mtime_ns=store.cookie_path(account_id).stat().st_mtime_ns)
+        if command['action'] == 'run' and hasattr(cx, 'desktop_quiz_guard'):
+            from .quiz_attempts import QuizAttemptStore, QuizGuard
+            lineage = command.get('lineage') or uuid.uuid4().hex
+            cx.desktop_quiz_guard = QuizGuard(QuizAttemptStore(command['data_dir'], account_id, uid), lineage, channel)
     checkpoint(channel)
     if verifying:
         channel.send('verification_progress', phase='courses', message='会话已校验，正在读取课程身份…', completed=0, total=0, reads=0, failures=0, elapsed_ms=0)
@@ -296,11 +326,78 @@ def real(channel, command):
                         completion_cache=TaskCompletionCache(command['data_dir'], account_id, uid))
         return
     chosen = select_courses(courses, command.get("selected", []))
+    # A continuation may only keep the exact scope that was stopped. Every part
+    # of it comes from the command, never from a fresh listing, so new items,
+    # other courses or a re-read list cannot silently widen the resumed run.
+    resume_scope = None
+    resume_courses = []
+    if resume is not None:
+        if (not isinstance(resume, dict)
+                or set(resume) != {'tasks', 'courses', 'account', 'uid'}
+                or not isinstance(resume['tasks'], list) or len(resume['tasks']) > 10000
+                or not isinstance(resume['courses'], list) or not resume['courses']
+                or len(resume['courses']) > 64):
+            raise ValueError('续跑范围无效，请重新读取课程后手动开始。')
+        for course in resume['courses']:
+            if (not isinstance(course, dict) or set(course) != {'courseId', 'clazzId', 'cpi', 'title'}
+                    or any(not isinstance(course.get(k), str) or len(course[k]) > 256
+                           for k in ('courseId', 'clazzId', 'cpi', 'title'))
+                    or not all(course[k] for k in ('courseId', 'clazzId', 'cpi'))):
+                raise ValueError('续跑课程范围无效，请重新读取课程后手动开始。')
+            resume_courses.append(course)
+        if len({(c['courseId'], c['clazzId']) for c in resume_courses}) != len(resume_courses):
+            raise ValueError('续跑课程范围重复，请重新读取课程后手动开始。')
+        resume_scope = {}
+        for row in resume['tasks']:
+            if (not isinstance(row, dict)
+                    or set(row) != {'taskId', 'courseId', 'clazzId', 'pointId', 'jobs', 'scanned', 'completed'}
+                    or any(not isinstance(row.get(k), str) or not 0 < len(row[k]) <= 256
+                           for k in ('taskId', 'courseId', 'clazzId', 'pointId'))
+                    or type(row['scanned']) is not bool
+                    or type(row['completed']) is not bool
+                    or not isinstance(row['jobs'], list)):
+                raise ValueError('续跑任务点范围无效，请重新读取课程后手动开始。')
+            key = (row['courseId'], row['clazzId'])
+            # The task id encodes course, class, chapter and its list position;
+            # a mismatched pair would otherwise address a different chapter.
+            head = f"{row['courseId']}:{row['clazzId']}:{row['pointId']}:"
+            if not row['taskId'].startswith(head):
+                raise ValueError('续跑任务点标识与课程或章节不符，请重新读取课程后手动开始。')
+            jobs = []
+            for job in row['jobs']:
+                if (not isinstance(job, list) or len(job) != 3
+                        or any(not isinstance(v, str) or len(v) > 256 for v in job)):
+                    raise ValueError('续跑任务点范围无效，请重新读取课程后手动开始。')
+                jobs.append(tuple(job))
+            scope = resume_scope.setdefault(key, {})
+            if row['pointId'] in scope:
+                raise ValueError('续跑范围包含重复章节，请重新读取课程后手动开始。')
+            scope[row['pointId']] = dict(jobs=jobs, scanned=row['scanned'], completed=row['completed'])
+        # Every course in the frozen scope must still be a live course with the
+        # same class context; a vanished or re-classed course is not resumable.
+        live = {course_key(course): course for course in chosen}
+        wanted = {(c['courseId'], c['clazzId']) for c in resume_courses}
+        if wanted - set(live):
+            raise ValueError('续跑的课程不在当前已读取课程中，请重新读取原账号课程。')
+        for course in resume_courses:
+            current = live[(course['courseId'], course['clazzId'])]
+            if str(current.get('cpi', '')) != course['cpi']:
+                raise ValueError('续跑课程的班级上下文（cpi）已变化，请重新读取课程后手动开始。')
+        if set(resume_scope) - wanted:
+            raise ValueError('续跑任务点不在所保留的课程范围内，请重新读取课程后手动开始。')
+        chosen = [course for course in chosen
+                  if (str(course['courseId']), str(course['clazzId'])) in wanted]
     selected_courses = list(chosen)
     from .course_progress import progress_identity, send_progress
     from .task_completion import TaskCompletionCache
     completion_cache = TaskCompletionCache(command["data_dir"], account_id, uid) if account_id else None
     ignore_completion_cache = common.get('ignore_completion_cache', False)
+    if resume_scope is not None and ignore_completion_cache:
+        # A continuation always honours the completion cache: re-checking and
+        # reprocessing every confirmed chapter would be a new, wider run.
+        ignore_completion_cache = False
+        channel.send('log', level='WARNING',
+                     message='续跑固定使用任务完成缓存；本次未按“忽略完成缓存”重新检查。')
     cached_ids = set()
     if channel.control:
         def check_resumed_session():
@@ -322,12 +419,30 @@ def real(channel, command):
             send_progress(channel, course, points)
         except ValueError:
             channel.send('course_progress_failed', **progress_identity(course))
+        wanted = resume_scope.get(course_key(course), {}) if resume_scope else None
+        if wanted is not None:
+            if set(wanted) - {str(point['id']) for point in points}:
+                raise ValueError('续跑的原章节已不在该课程中（可能班级或章节已变化），未启动任何任务；'
+                                 '请重新读取课程后手动开始。')
         for i, point in enumerate(points):
+            if wanted is not None and str(point['id']) not in wanted:
+                # Newly discovered chapters and other courses stay out of a
+                # resumed run, even when the platform list grew since the stop.
+                continue
             task = dict(id=f"{course['courseId']}:{course['clazzId']}:{point['id']}:{i}",
                         title=point["title"], course=course["title"], course_data=course, point=point)
+            if wanted is not None:
+                scope = wanted[str(point['id'])]
+                # Only chapters actually scanned before the stop constrain the
+                # job set; unscanned ones are discovered as in a normal run.
+                task['resume_jobs'] = scope['jobs'] if scope['scanned'] else None
             tasks.append(task)
             course_tasks.append(task)
-            if not ignore_completion_cache and str(point['id']) in completed:
+            # A continuation always honours the cache (forced above); a normal
+            # run keeps the existing "ignore completed" switch.
+            if ((wanted is not None and scope['completed'])
+                    or (not ignore_completion_cache and str(point['id']) in completed)
+                    or (resume is not None and point.get('has_finished') is True)):
                 cached_ids.add(task['id'])
     chosen = [course for course in chosen
               if any(t['id'] not in cached_ids
@@ -373,9 +488,16 @@ def real(channel, command):
             remember_result(task, True)
         return 'success' if confirmed else 'pending'
 
+    def run_chapter(task):
+        # Only pass the job filter when a continuation actually has one, so the
+        # existing adapter call signature is untouched for normal runs.
+        if task.get('resume_jobs') is None:
+            return core.process_chapter(cx, task["course_data"], task["point"], common["speed"], task['id'])
+        return core.process_chapter(cx, task["course_data"], task["point"], common["speed"], task['id'],
+                                    allowed_jobs=task['resume_jobs'])
+
     statuses = run_tasks(channel, [t for t in tasks if t['id'] not in cached_ids],
-                         lambda t: core.process_chapter(cx, t["course_data"], t["point"], common["speed"], t['id']),
-                         common, core.ChapterResult, verify=verify_task)
+                         run_chapter, common, core.ChapterResult, verify=verify_task)
     statuses.update({task_id: 'success' for task_id in cached_ids})
     # Retain the final read for media whose platform confirmation arrives late.
     for course in chosen:
@@ -403,10 +525,14 @@ def real(channel, command):
                     remember_result(task, True)
                 statuses[task["id"]] = status
                 channel.send("task", id=task["id"], status=status)
-    if common["add_learning_count"]:
+    if common["add_learning_count"] and resume_scope is None:
+        # Appending learning counts walks every chapter of the course, which
+        # would touch confirmed and new chapters outside the stopped scope.
         channel.send("log", message="开始执行章节学习次数追加。", level="INFO")
         for course in selected_courses:
             core.increase_learning_count_for_course(cx, course, common)
+    elif common["add_learning_count"]:
+        channel.send('log', level='WARNING', message='续跑不执行整课学习次数追加；如需追加请手动新开一轮。')
     counts = {s: list(statuses.values()).count(s) for s in ("success", "failed", "skipped", "pending")}
     checkpoint(channel)
     if notification_config.get("provider"):

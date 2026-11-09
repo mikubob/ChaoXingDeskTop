@@ -21,7 +21,7 @@ from .release_info import RELEASE_URLS, verification_info
 
 # Deliberately exclude event handlers and internal methods from RPC.
 COMMANDS = frozenset("""
-setValue save close discardAndClose loadDemo fetchCourses startTasks
+setValue save close discardAndClose loadDemo fetchCourses startTasks resumeTasks
 confirmStartTasks cancelStartTasks pause stop browserLogin cancelBrowserLogin
 addAccount switchAccount renameAccount removeAccount searchCourses selectCourse
 selectVisible toggleProvider moveProvider checkAi checkBank offlineCheck
