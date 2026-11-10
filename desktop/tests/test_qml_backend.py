@@ -272,8 +272,10 @@ class QmlBackendTests(unittest.TestCase):
         b.courses = [dict(courseId='c', clazzId='l', cpi='p', title='Course')]
         self.assertFalse(b.summary['resumeScoped'])
         self.assertFalse(b.resumeState['available'])
-        # Start through the real path so the launch scope is frozen, then stop.
-        b._begin('run', False, [['c', 'l']])
+        # Freeze the real launch scope while the test supplies the worker events.
+        with patch.object(b.controller, 'start') as start:
+            b._begin('run', False, [['c', 'l']])
+        start.assert_called_once()
         b.on_event(dict(type='tasks', tasks=[
             dict(id='c:l:p1:0', course='Course', title='One', status='success',
                  courseId='c', clazzId='l', pointId='p1'),
