@@ -1,6 +1,9 @@
 """Native acceptance must consume this run's report from the expected frontend."""
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -17,6 +20,14 @@ class SmokeReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = self.write(directory, {'success': True, 'message': 'ok', 'frontend': 'WinUI 3'})
             self.assertEqual(verify_smoke_report(path)['message'], 'ok')
+
+    def test_cli_accepts_chinese_message_on_legacy_console(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, {'success': True, 'message': '冒烟通过', 'frontend': 'WinUI 3'})
+            script = Path(__file__).resolve().parents[1] / 'scripts/check_smoke_report.py'
+            result = subprocess.run([sys.executable, str(script), str(path)], capture_output=True,
+                                    env={**os.environ, 'PYTHONIOENCODING': 'cp1252:strict'})
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_rejects_qml_frontend_report(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -37,11 +37,11 @@ def main():
                         help='required frontend marker; empty accepts any report')
     args = parser.parse_args()
     try:
-        report = verify_smoke_report(args.report, args.frontend)
+        verify_smoke_report(args.report, args.frontend)
     except ValueError as error:
         # A CI step reads the exit code, so report the reason without a traceback.
         raise SystemExit(str(error))
-    print(report.get('message') or 'GUI smoke report accepted')
+    print('GUI smoke report accepted')
 
 
 if __name__ == '__main__':
