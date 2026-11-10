@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import uuid
 
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
-from PySide6.QtWidgets import QFileDialog
+from .file_dialogs import FileDialogs as QFileDialog
 
 from . import __version__
 from .answers import option_pairs, plain_text, question_images
@@ -33,12 +34,20 @@ from .course_progress import CourseProgressCache, progress_key, valid_progress
 
 
 class Backend(QObject):
+    # Native frontends replace these adapters; business operations stay shared.
+    file_dialogs = QFileDialog
+
+    def copy_text(self, text):
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.clipboard().setText(text)
+
     changed = Signal()
     busyChanged = Signal()
     configChanged = Signal()
     inputChanged = Signal()
     providersChanged = Signal()
     coursesChanged = Signal()
+    coursesLoaded = Signal()
     pageRequested = Signal(int)
     questionsReset = Signal()
     startConfirmationRequested = Signal(str)
@@ -122,6 +131,20 @@ class Backend(QObject):
         self._draft_input_errors = {}
         self._draft_sources_uncertain = False
         self._run_completed = False
+        # Session continuation (#5): the exact identity and scope of a run the
+        # user explicitly stopped, kept only for this app session. It survives
+        # a continuation being in flight, so a later stop cannot widen it.
+        self._resume = None
+        self._resume_launching = False
+        # The continuation currently being launched: retained until the worker
+        # publishes verified tasks (or the launch fails), never cleared merely
+        # because QProcess.start returned.
+        self._resume_inflight = None
+        self._controller_exit = None
+        # Identity and scope captured when a run starts, so a stop during login
+        # or chapter preparation is still continuable with the original context.
+        self._run_launch = None
+        self._launch_points = {}
         self._history_timer = QTimer(self)
         self._history_timer.setSingleShot(True)
         self._history_timer.setInterval(2000)
@@ -170,6 +193,7 @@ class Backend(QObject):
         self._course_controller.finished.connect(self.on_course_progress_finished)
         self.configChanged.connect(self.refresh_redactor)
         self._account_rows_cache, self._cookie_exists = [], False
+        self._job_scope = {}
         self.verification_progress = {}
         self._record_cards = {}
         self.configChanged.connect(self.refresh_account_status)
@@ -199,8 +223,7 @@ class Backend(QObject):
     @Slot(str)
     def releaseAction(self, action):
         if action == 'copy':
-            from PySide6.QtGui import QGuiApplication
-            QGuiApplication.clipboard().setText(verification_info())
+            self.copy_text(verification_info())
             self.feedback('release', '版本与校验说明已复制；不含账号、凭据或数据目录。', 'success')
         elif action in RELEASE_URLS:
             from PySide6.QtGui import QDesktopServices
@@ -390,6 +413,9 @@ class Backend(QObject):
                     mode=self.mode, demo=self.demo_mode, courseCount=len(self.courses),
                     selectedCount=len(self.selected), hiddenCount=hidden,
                     courseSearch=self.search,
+                    coursesReady=self.course_identity is not None,
+                    resumeScoped=self._resume is not None,
+                    resume=dict(self.resumeState),
                     total=total, success=counts["success"], pending=counts["pending"] + counts["processed"],
                     failed=counts["failed"], progress=round(100 * sum(counts[s] for s in TERMINAL) / total) if total else 0,
                     saveState=self.save_state, aiStatus=self.ai_status,
@@ -576,11 +602,10 @@ class Backend(QObject):
                 raise ValueError('存在未进入副本的超容量／非法输入，请先修正后再复制／导出。')
             text = export_text(self._draft)
             if clipboard:
-                from PySide6.QtGui import QGuiApplication
-                QGuiApplication.clipboard().setText(text)
+                self.copy_text(text)
                 self.feedback('draft', '人工编辑副本已复制，未触发提交。', 'success')
             else:
-                name, _ = QFileDialog.getSaveFileName(None, '导出人工编辑副本（含正文，仅供自行保管）', 'draft-copy.txt', '文本 (*.txt)')
+                name, _ = self.file_dialogs.getSaveFileName(None, '导出人工编辑副本（含正文，仅供自行保管）', 'draft-copy.txt', '文本 (*.txt)')
                 if name:
                     atomic_write(Path(name), text.encode('utf-8'))
                     self.feedback('draft', '编辑副本已导出，包含正文；未触发提交。', 'success')
@@ -839,6 +864,7 @@ class Backend(QObject):
 
     def reset_account_view(self):
         self.cancel_course_progress()
+        self._resume = None
         self._course_progress.clear()
         self._record_cards.clear()
         self.verification_progress = {}
@@ -974,7 +1000,7 @@ class Backend(QObject):
             self.config['common'].update(username=row['username'], password='',
                                          use_cookies='true' if self.cookie_path().exists() else 'false')
             self.reset_account_view()
-            self.notify('已切换到 ' + row['label'] + '，点击「登录并读取」获取该账号课程。')
+            self.notify('已切换到 ' + row['label'] + '，选择登录方式进入该账号课程。')
         self.execute(run)
 
     @Slot(str)
@@ -1073,8 +1099,16 @@ class Backend(QObject):
                 c["use_cookies"], cookie.stat().st_mtime_ns if cookie and cookie.exists() else None)
 
     def begin(self, action, demo=False, selected=None, topic=''):
+        self._begin(action, demo, selected, topic)
+
+    def _begin(self, action, demo=False, selected=None, topic='', resume=None):
         if self.busy:
             raise ValueError("请先停止当前任务。")
+        if resume is not None:
+            # A continuation is only legal after the controller finished this
+            # session's run with an explicit stop; nothing else may race it.
+            if self._resume is None or not self._resume_exited():
+                raise ValueError('旧后台尚未确认退出，暂不能续跑。')
         config = defaults() if demo else self.config
         if action == "courses" and not demo:
             account = defaults()
@@ -1137,11 +1171,28 @@ class Backend(QObject):
             self._run_completed = False
             self._attention_model.clear()
             self._task_model.reset([])
+            self._job_scope.clear()
             self._question_model.clear()
             self._discussion_model.clear()
             self._activity_model.clear()
             self.reset_question_filters()
             self.pageRequested.emit(4)
+            self._launch_points.clear()
+            # Freeze the launch identity and selection now: a stop during
+            # login/preparation still has to know the original account, courses
+            # and full class context, even before any task list was received.
+            self._run_launch = dict(
+                account=self.operation_account,
+                uid=(self.account_store.get(self.operation_account)['uid']
+                     if self.operation_account and self.account_store else ''),
+                identity=self.identity() if not demo else None,
+                lineage=resume['lineage'] if resume else uuid.uuid4().hex,
+                tasks=resume['tasks'] if resume else [],
+                selection=[list(key) for key in (selected or [])],
+                courses=[dict(courseId=str(c.get('courseId', '')), clazzId=str(c.get('clazzId', '')),
+                              cpi=str(c.get('cpi', '')), title=c.get('title', ''))
+                         for c in self.courses if course_key(c) in
+                         {(str(k[0]), str(k[1])) for k in (selected or [])}])
         self.mode = "离线演示 · 示例数据" if demo else "检查 AI 连接" if action == "check_ai" else "正在连接超星"
         self.notify("正在读取课程…" if action == "courses" else "正在检查 AI 连接…" if action == "check_ai" else "正在准备任务…")
         command = dict(action=action, demo=demo, config=payload, selected=selected or [], data_dir=str(data_dir()))
@@ -1156,13 +1207,242 @@ class Backend(QObject):
         if self.operation_account:
             command.update(account_id=self.operation_account,
                            account_uid=self.account_store.get(self.operation_account)['uid'])
-        self.controller.start(command)
+        if resume is not None:
+            # The continuation keeps its own account/uid and full class context;
+            # the worker validates them against the live session before any task.
+            command['resume'] = dict(tasks=[{key: row[key] for key in
+                                             ('taskId', 'courseId', 'clazzId', 'pointId', 'jobs', 'scanned', 'completed')}
+                                            for row in resume['tasks']],
+                                     courses=[dict(course) for course in resume.get('courses', [])],
+                                     account=resume.get('account', ''),
+                                     uid=resume.get('uid', ''))
+        if action == 'run':
+            command['lineage'] = self._run_launch['lineage']
+        # QProcess.start() is asynchronous: a failed start, a failed login or a
+        # failed course read arrives later. The previous continuation therefore
+        # only moves to `_resume_inflight`; it is dropped once this run really
+        # publishes verified tasks, and restored if the launch fails first.
+        previous, exit_code = self._resume, self._controller_exit
+        if action == 'run':
+            self._controller_exit = None
+            self._resume_inflight = self._resume if resume else None
+            self._resume = None
+        try:
+            self.controller.start(command)
+        except Exception:
+            if action == 'run':
+                self._resume, self._controller_exit = previous, exit_code
+                self._resume_inflight = None
+            raise
         if action == 'run':
             self._history_account = 'offline-demo' if demo else self.operation_account
             self._history_run = self.controller.run_id
             self._history_time = datetime.now().astimezone().isoformat(timespec='seconds')
             self.history_error = ''
             self.save_run_summary('运行中 / 若已退出则为中断快照')
+
+    @Property('QVariantMap', notify=changed)
+    def resumeState(self):
+        """Visible continuation state; empty when there is nothing to continue."""
+        row = self._resume
+        if not row:
+            return dict(available=False, enabled=False, reason='', label='继续上次任务',
+                        scope='', account='', stoppedAt='', needsConfirmation=False)
+        reason, clickable, needs_confirmation = self.resume_blocker()
+        return dict(available=True, enabled=clickable, clickable=clickable, reason=reason,
+                    label='继续上次任务', scope=row['scope'], account=row['label'],
+                    stoppedAt=row['stopped_at'], needsConfirmation=needs_confirmation,
+                    # The UI only needs sizes; full task ids stay out of the
+                    # broadcast summary.
+                    taskCount=len(row['tasks']),
+                    scannedCount=sum(1 for t in row['tasks'] if t['scanned']))
+
+    def _writes_to_platform(self):
+        config = self.config
+        return config['tiku']['submit'].lower() == 'true' or any(
+            config[section]['enabled'].lower() == 'true' and config[section]['auto_submit'].lower() == 'true'
+            for section in ('discussion', 'activity'))
+
+    def resume_blocker(self):
+        """(reason, clickable, needs_confirmation) for the continuation entry.
+
+        ``clickable`` is about the control, not about readiness to write: when a
+        write policy needs confirmation the button must stay clickable so the
+        user can open the confirmation, otherwise that gate is unreachable.
+        """
+        row = self._resume
+        if not row:
+            return '本应用会话中没有因显式停止而保留的任务。', False, False
+        if self.controller.active:
+            return ('后台仍在停止中，确认完全退出后才能续跑。' if self.controller.stopping
+                    else '任务正在运行，请先停止再续跑。'), False, False
+        if not self._resume_exited():
+            return '旧后台尚未确认退出，暂不能续跑。', False, False
+        if self.busy:
+            return '请先结束当前操作。', False, False
+        if not row.get('demo'):
+            try:
+                if self.identity() != row['identity']:
+                    return '账号、凭据或本机会话已变化，请重新读取课程后手动开始。', False, False
+            except (OSError, ValueError) as exc:
+                return self.redact(exc), False, False
+            if self.course_identity != row['identity']:
+                return '课程会话已变化，请重新读取原账号课程后手动开始。', False, False
+            account = self.account_store.get(row['account']) if self.account_store else None
+            if not account or not row['uid'] or account['uid'] != row['uid']:
+                return '账号的平台身份已变化，请重新读取原账号课程。', False, False
+        if not row['courses']:
+            return '没有被保留的运行课程。', False, False
+        live = {course_key(course): course for course in self.courses}
+        for course in row['courses']:
+            match = live.get(course_key(course))
+            if match is None:
+                return '原课程已不在已读取的课程列表中，请重新读取后手动开始。', False, False
+            if not course['cpi'] or str(match.get('cpi', '')) != course['cpi']:
+                return '原课程的班级上下文（cpi）已变化，请重新读取课程后手动开始。', False, False
+        if not row.get('demo') and self._writes_to_platform():
+            if row.get('approved') != self._resume_signature():
+                return ('续跑将执行自动提交／发布写入；点击后需确认本账号、原范围与完整策略。'
+                        '确认前不会启动。'), True, True
+        return '将只继续上述范围内尚未核验完成的任务点；已确认完成项与未知提交结果不会重跑。', True, False
+
+    def _resume_signature(self):
+        """Bind approval to the full visible policy, not just the write booleans.
+
+        Any settings change invalidates a pending confirmation, so a user can
+        never approve one summary and start with another.
+        """
+        row = self._resume
+        return (row['account'], self.identity(), tuple(row['courses']),
+                tuple((t['taskId'], t['pointId'], tuple(map(tuple, t['jobs'])), t['scanned'])
+                      for t in row['tasks']),
+                serialize(self.config))
+
+    def _resume_exited(self):
+        # The controller clears `active` and its kill timer before emitting
+        # `finished`, so a completed finish is the exit evidence we rely on.
+        return not self.controller.active and self._controller_exit is not None
+
+    def _remember_resume(self):
+        """Retain the launch identity and scope after an explicit, finished stop.
+
+        A continuation may stop more than once. Each stop merges what this run
+        observed into the *previous* retained record instead of rebuilding it,
+        so chapters that were never rescanned keep their earlier job whitelist
+        and a second stop can never widen the scope back to the whole course.
+
+        A stop before the task list exists keeps the original course scope and
+        an empty task list, which the worker treats as "prepare as before".
+        """
+        if self.operation != 'run':
+            return
+        launch = self._run_launch or {}
+        identity = launch.get('identity', self.course_identity)
+        if self.demo_mode:
+            account = 'offline-demo'
+            label, uid = '离线演示', ''
+        else:
+            account = launch.get('account') or (self.account_store.active if self.account_store else '')
+            row = self.account_store.get(account) if self.account_store else None
+            if not identity or not account or not row or identity[0] != account:
+                return
+            label, uid = row['label'], launch.get('uid', row['uid'])
+        courses = launch.get('courses', [])
+        # Everything already retained stays retained, keyed by the stable
+        # course/class/chapter identity rather than by task id or list order.
+        observed = {(t['courseId'], t['clazzId'], t['pointId']): t for t in launch.get('tasks', [])}
+        for task in self.tasks:
+            point = self._launch_points.get(str(task.get('id'))) or {}
+            point_id = str(task.get('pointId') or point.get('pointId') or '')
+            course_id = str(task.get('courseId') or point.get('courseId') or '')
+            clazz_id = str(task.get('clazzId') or point.get('clazzId') or '')
+            if not (point_id and course_id and clazz_id):
+                continue
+            key = (course_id, clazz_id, point_id)
+            # `scanned` means this chapter's job list was actually observed in
+            # this run; only then may its whitelist be replaced by a fresh one.
+            if str(task['id']) in self._job_scope:
+                jobs = [list(job) for job in self._job_scope[str(task['id'])]]
+                scanned = True
+            else:
+                # Not rescanned during this run (e.g. it never got that far):
+                # keep the whitelist this chapter had in the continued run.
+                carried = observed.get(key, {})
+                jobs = carried.get('jobs', [])
+                scanned = carried.get('scanned', False)
+            completed = task['status'] == 'success' or observed.get(key, {}).get('completed', False)
+            observed[key] = dict(taskId=str(task['id']), courseId=course_id, clazzId=clazz_id,
+                                 pointId=point_id, jobs=jobs, scanned=scanned,
+                                 completed=completed,
+                                 title=task.get('title', ''), course=task.get('course', ''))
+        if not courses:
+            keys = {(t['courseId'], t['clazzId']) for t in observed.values()}
+            courses = [dict(courseId=str(c['courseId']), clazzId=str(c['clazzId']),
+                            cpi=str(c.get('cpi', '')), title=c['title'])
+                       for c in self.courses if course_key(c) in keys]
+        tasks = list(observed.values())
+        scope = ', '.join(f"{t['course']} / {t['title']}" for t in tasks[:3])
+        selection = [list(key) for key in launch.get('selection') or []
+                     if isinstance(key, (list, tuple)) and len(key) == 2]
+        self._resume = dict(identity=identity, account=account, uid=uid, demo=self.demo_mode,
+                            lineage=launch.get('lineage') or uuid.uuid4().hex,
+                            selection=selection or [[c['courseId'], c['clazzId']] for c in courses],
+                            label=label, courses=courses, tasks=tasks,
+                            scope=scope or ', '.join(c['title'] or c['courseId'] for c in courses) or '本轮课程',
+                            approved=None,
+                            stopped_at=datetime.now().astimezone().isoformat(timespec='seconds'))
+
+    @Slot()
+    def resumeTasks(self):
+        """Continue the explicitly stopped run without re-selecting courses."""
+        def run():
+            reason, clickable, needs_confirmation = self.resume_blocker()
+            if not self._resume:
+                raise ValueError(reason or '当前没有可继续的任务。')
+            if needs_confirmation:
+                if self._start_confirmation and self._start_confirmation[0] == 'resume':
+                    # One confirmation at a time: a repeated click must not
+                    # stack dialogs or silently reuse a stale bound summary.
+                    self.notify('续跑确认已打开，请先确认或取消。', 'warning')
+                    return
+                self._start_confirmation = ('resume', self._resume_signature())
+                self.startConfirmationRequested.emit(
+                    '本轮策略包含自动提交／发布，续跑会在原范围内写入平台。\n\n' +
+                    self.strategySummary + '\n\n续跑范围：' + self._resume['scope'])
+                return
+            if not clickable:
+                raise ValueError(reason or '当前没有可继续的任务。')
+            self._launch_resume()
+        self.execute(run)
+
+    def _launch_resume(self):
+        if self._resume_launching:
+            return False
+        row = self._resume
+        if not row or not self._resume_exited() or self.controller.active:
+            return False
+        if self.busy:
+            raise ValueError('请先结束当前操作。')
+        if not row.get('demo'):
+            validate(self.config, login=True, cookie_path=self.cookie_path())
+        # Freeze the scope before it can be re-read; a re-read may add new
+        # chapters and must not widen this continuation. A stop that happened
+        # before the task list arrived keeps its original course scope and an
+        # empty task list, which the worker treats as "prepare as before".
+        scope = dict(tasks=[dict(t) for t in row['tasks']],
+                     courses=[dict(c) for c in row['courses']],
+                     account=row['account'], uid=row.get('uid', ''), lineage=row['lineage'])
+        # The frozen selection is what the run is launched with; it is never
+        # recomputed from the current course list.
+        selection = [list(key) for key in row.get('selection') or
+                     [[c['courseId'], c['clazzId']] for c in row['courses']]]
+        self._resume_launching = True
+        try:
+            self._begin('run', bool(row.get('demo')), selection, resume=scope)
+        finally:
+            self._resume_launching = False
+        self.notify('正在续跑：沿用原账号、原课程与原任务点范围；已确认完成项和结果未知项不会重跑。')
+        return True
 
     @Slot()
     def loadDemo(self):
@@ -1179,9 +1459,7 @@ class Backend(QObject):
                 raise ValueError("请至少选择一门课程。")
             validate(defaults() if self.demo_mode else self.config)
             policy = serialize(self.config)
-            writing = not self.demo_mode and (self.config['tiku']['submit'].lower() == 'true' or any(
-                self.config[s]['enabled'].lower() == 'true' and self.config[s]['auto_submit'].lower() == 'true'
-                for s in ('discussion', 'activity')))
+            writing = not self.demo_mode and self._writes_to_platform()
             if writing and self._approved_policy != policy:
                 self._start_confirmation = (policy, self.identity(), tuple(sorted(self.selected)))
                 self.startConfirmationRequested.emit(self.strategySummary)
@@ -1192,6 +1470,20 @@ class Backend(QObject):
     @Slot()
     def confirmStartTasks(self):
         pending, self._start_confirmation = self._start_confirmation, None
+        if pending and pending[0] == 'resume':
+            def start():
+                reason, clickable, needs_confirmation = self.resume_blocker()
+                # Re-check everything the user just saw: account, scope and the
+                # complete policy. Any change invalidates the confirmation.
+                if not self._resume or not needs_confirmation or self._resume_signature() != pending[1]:
+                    self.notify('账号、范围或策略已变化，请重新查看摘要后再续跑。', 'warning')
+                    return
+                self._resume['approved'] = pending[1]
+                if not self._launch_resume():
+                    raise ValueError(reason or '旧后台尚未确认退出，暂不能续跑。')
+            # Validation/launch failures surface like every other action.
+            self.execute(start)
+            return
         if not pending or pending != (serialize(self.config), self.identity(), tuple(sorted(self.selected))):
             self.notify('账号、课程或策略已变化，请重新查看摘要后开始。', 'warning')
             return
@@ -1280,10 +1572,9 @@ class Backend(QObject):
 
     @Slot(str)
     def copyActivity(self, record_id):
-        from PySide6.QtGui import QGuiApplication
         record = self._activity_model.detail(record_id)
         if record:
-            QGuiApplication.clipboard().setText(record['detailText'])
+            self.copy_text(record['detailText'])
             self.feedback('record', '活动逐题草稿已复制。', 'success')
 
     @Slot(str)
@@ -1331,10 +1622,9 @@ class Backend(QObject):
 
     @Slot(str)
     def copyDiscussion(self, record_id):
-        from PySide6.QtGui import QGuiApplication
         record = self._discussion_model.detail(record_id)
         if record.get('content'):
-            QGuiApplication.clipboard().setText(record['content'])
+            self.copy_text(record['content'])
             self.feedback('record', '讨论正文已复制。', 'success')
 
     @Slot()
@@ -1365,7 +1655,7 @@ class Backend(QObject):
             from .declarative import TEMPLATE, validate_definition, preview_definition
             import json
             if action == 'import':
-                name, _ = QFileDialog.getOpenFileName(None, '导入声明式 JSON（不执行 handler）', '', 'JSON (*.json)')
+                name, _ = self.file_dialogs.getOpenFileName(None, '导入声明式 JSON（不执行 handler）', '', 'JSON (*.json)')
                 if not name:
                     return
                 with Path(name).open('rb') as source:
@@ -1379,7 +1669,7 @@ class Backend(QObject):
             else:
                 text = self.config['question_bank']['declarative_definition']
                 definition = validate_definition(text) if text.strip() else TEMPLATE
-                name, _ = QFileDialog.getSaveFileName(None, '导出不含 Token 的 JSON 模板', 'question-bank.json', 'JSON (*.json)')
+                name, _ = self.file_dialogs.getSaveFileName(None, '导出不含 Token 的 JSON 模板', 'question-bank.json', 'JSON (*.json)')
                 if name:
                     Path(name).write_text(json.dumps(definition, ensure_ascii=False, indent=2), encoding='utf-8')
         self.execute(run)
@@ -1422,6 +1712,7 @@ class Backend(QObject):
         self.clear_input()
         self.controller.stop()
         self.notify("正在停止后台任务…", "warning")
+        self.changed.emit()
 
     def append_log(self, message, level="INFO"):
         line = f"{datetime.now():%H:%M:%S}  {str(level)[:10]:7}  {self.redact(self.log_redactor(str(message)))}"
@@ -1456,6 +1747,12 @@ class Backend(QObject):
         if kind == 'record_card_hint':
             if self.operation == 'run' and len(self._record_cards) < 10000:
                 self._record_cards[event['id']] = sorted(set(event['indices']))
+            return
+        if kind == 'job_scope':
+            # Task points observed for a chapter in this run; a continuation
+            # keeps exactly these instead of adopting ones added later.
+            if self.operation == 'run' and len(self._job_scope) < 10000:
+                self._job_scope[event['id']] = [list(job) for job in event['jobs']]
             return
         if kind == 'verification_failed':
             if (self.operation == 'verify' and self.operation_account and self.account_store
@@ -1582,7 +1879,15 @@ class Backend(QObject):
                         and identity[:4] == self.course_identity[:4]
                         and identity[-1] is not None
                         and event.get('cookie_mtime_ns') == identity[-1]):
+                    old_identity = self.course_identity
                     self.course_identity = (*identity[:3], 'true', identity[-1])
+                    launch = self._run_launch
+                    if (launch and launch['identity'] == old_identity
+                            and launch['account'] == self.operation_account
+                            and launch['uid'] in ('', uid)):
+                        launch.update(identity=self.course_identity, uid=uid)
+                        if self._resume_inflight:
+                            self._resume_inflight.update(identity=self.course_identity, uid=uid)
                 self.configChanged.emit()
                 self.changed.emit()
             self.execute(remember)
@@ -1618,6 +1923,7 @@ class Backend(QObject):
             self.courses = event["courses"]
             self.demo_mode = event.get("demo", False)
             self.course_identity = self.identity()
+            self.coursesLoaded.emit()
             self.load_course_progress()
             self.coursesChanged.emit()
             self.mode = "离线演示 · 示例数据" if self.demo_mode else "课程已读取"
@@ -1642,6 +1948,15 @@ class Backend(QObject):
         elif kind == "tasks":
             self._attention_model.clear()
             self._task_model.reset([dict(t, status="waiting") for t in event["tasks"]])
+            # The retained scope is keyed by course/class/point; without them a
+            # stop could not be continued accurately.
+            self._launch_points = {
+                str(t['id']): dict(courseId=str(t.get('courseId', '')), clazzId=str(t.get('clazzId', '')),
+                                   pointId=str(t.get('pointId', '')))
+                for t in event['tasks'] if t.get('id')}
+            # A verified task list proves this launch really took hold, so the
+            # superseded continuation may now be dropped for good.
+            self._resume_inflight = None
             self.notify("正在处理章节。本轮进度不表示课程学分完成比例。")
         elif kind == "task":
             if self._task_model.update_status(event["id"], event["status"]) and not self._progress_timer.isActive():
@@ -1717,6 +2032,19 @@ class Backend(QObject):
         self._progress_timer.stop()
         self._log_model.flush()
         self._history_timer.stop()
+        # The controller already cleared `active`, its kill timer and its
+        # buffers before emitting this signal, so `stopping` here means the
+        # user's explicit stop really completed (not merely was requested).
+        self._controller_exit = code
+        stopped = self.controller.stopping and self.operation == 'run' and not self._run_completed
+        inflight, self._resume_inflight = self._resume_inflight, None
+        if stopped:
+            self._remember_resume()
+        elif inflight is not None and not self._run_completed:
+            # The launch never published a task list (failed start, failed
+            # login, failed course read). Put the superseded continuation back
+            # instead of silently consuming it.
+            self._resume = inflight
         if self.controller.stopping:
             self.mode = "已停止"
             self.message, self.tone = "后台已停止。已发送到平台的请求不会撤销，可重新开始。", 'warning'
@@ -1788,7 +2116,7 @@ class Backend(QObject):
     def discardAndClose(self):
         return self._close(True)
 
-    def _close(self, discard):
+    def _prepare_close(self, discard):
         if self._closed:
             return True
         # Validate/save before stopping, so a failed save preserves the live window.
@@ -1801,6 +2129,13 @@ class Backend(QObject):
                 self.save_state = "保存失败 · 未保存"
                 self.notify(exc, "danger")
                 return False
+        return True
+
+    def _close(self, discard):
+        if self._closed:
+            return True
+        if not self._prepare_close(discard):
+            return False
         self.stop()
         self.cancel_course_progress()
         if self._course_controller.active:
@@ -1826,7 +2161,7 @@ class Backend(QObject):
         def run():
             if action in ("import_config", "import_cookie"):
                 title = "导入 INI 配置" if action == "import_config" else "导入 Cookie（name=value; 格式）"
-                name, _ = QFileDialog.getOpenFileName(None, title, "", "配置 / 文本 (*.ini *.txt);;所有文件 (*)")
+                name, _ = self.file_dialogs.getOpenFileName(None, title, "", "配置 / 文本 (*.ini *.txt);;所有文件 (*)")
                 if not name:
                     return
                 text = Path(name).read_text(encoding="utf-8-sig")
@@ -1857,7 +2192,7 @@ class Backend(QObject):
                 self.reset_account_view()
                 self.notify("当前账号的本机 Cookie 已清除，其他账号会话已保留。")
             elif action == 'export_diagnostics':
-                name, _ = QFileDialog.getSaveFileName(None, '导出排障配置（不含凭据）', 'diagnostics.ini', 'INI (*.ini)')
+                name, _ = self.file_dialogs.getSaveFileName(None, '导出排障配置（不含凭据）', 'diagnostics.ini', 'INI (*.ini)')
                 if name:
                     atomic_write(Path(name), diagnostic_config(self.config).encode('utf-8'))
                     self.notify('排障配置已导出；仅包含策略与版本，不含会话或内容。', 'success')
@@ -1865,7 +2200,7 @@ class Backend(QObject):
                 is_config = action == "export_config"
                 if is_config:
                     validate(self.config)
-                name, _ = QFileDialog.getSaveFileName(None, "导出完整 INI（包含密码与密钥）" if is_config else "导出已脱敏日志", "config.ini" if is_config else "chaoxing-desktop.log", "INI (*.ini)" if is_config else "日志 (*.log)")
+                name, _ = self.file_dialogs.getSaveFileName(None, "导出完整 INI（包含密码与密钥）" if is_config else "导出已脱敏日志", "config.ini" if is_config else "chaoxing-desktop.log", "INI (*.ini)" if is_config else "日志 (*.log)")
                 if name:
                     atomic_write(Path(name), (serialize(self.config) if is_config else self.redact(self.log_redactor("\n".join(self.logs)))).encode('utf-8'))
                     self.notify("文件已导出。", "success")
@@ -1879,7 +2214,7 @@ class Backend(QObject):
     def chooseLogDirectory(self):
         if self.busy:
             return
-        directory = QFileDialog.getExistingDirectory(None, "选择日志保存目录", self.summary['logDirectory'])
+        directory = self.file_dialogs.getExistingDirectory(None, "选择日志保存目录", self.summary['logDirectory'])
         if directory:
             self.setValue('logging', 'directory', directory)
 

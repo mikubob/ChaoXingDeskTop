@@ -1,0 +1,11 @@
+{
+  "installer": "ChaoxingDesktop-0.4.2-Setup-win-x64.exe",
+  "bytes": 94307600,
+  "sha256": "f84097ab6dbd382f10616df63cf366d55305f5d67fe1970a5331a49b9336c61e",
+  "profile": "installer-0_4_2-45d7e389b46d43ef",
+  "payloadEntries": 1957,
+  "selectedEntries": 1582,
+  "selection": "Files the verified installer writes that the WinUI 3 payload no longer provides: the Qt Quick/QML frontend, retired Qt and OpenCV runtime files, assets and API-set DLLs that now ship at other paths, and the bundled 0.4.2 source ZIP. These paths were identified by comparing the complete silent installation with the WinUI 3 installer stage.",
+  "collectedWith": "Silent install of the verified installer into an isolated desktop/build directory (/S /NoRegistration /NoShortcuts /D=...), enumerated from the installed tree (1957 files); leftover set computed as installed-tree paths absent from the accepted WinUI 3 portable payload. Cross-checked with '7z l <installer>'. Note: 7-Zip 9.10 beta under-reports this NSIS payload (1415 of 1957 files), so the installed tree, not the 7z listing, is authoritative.",
+  "verifiedAbsentFromWinUiPayload": true
+}

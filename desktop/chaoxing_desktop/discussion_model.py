@@ -9,6 +9,7 @@ STAGES = dict(discovered='已识别', checking='检查本人回复', generating=
               publish_unknown='发布未知', pending='待处理', skipped='非任务点，已跳过')
 TASKS = dict(pending='待确认', confirmed='已确认', not_applicable='不适用')
 LEVELS = dict(concise='精简', medium='中等', detailed='详细', fixed_good='固定好')
+SOURCES = {'ai': 'AI 生成', 'fixed': '固定回复', '': ''}
 LIMITS = dict(id=256, run_id=128, task_id=256, course=500, chapter=500, title=2000,
               level=32, source=16, stage=32, task_status=32, reason=2000, content=1000)
 
@@ -28,6 +29,16 @@ def safe_record(record, redactor):
     if not valid_record(clean):
         raise ValueError('讨论事件格式无效。')
     return clean
+
+
+def detail_text(record):
+    """Presentation allowlist: identifiers remain in storage and RPC only."""
+    fields = [('课程', record['course']), ('章节', record['chapter']),
+              ('讨论主题', record['title']), ('处理阶段', STAGES[record['stage']]),
+              ('任务点状态', TASKS[record['task_status']]),
+              ('回复方式', LEVELS[record['level']]), ('内容来源', SOURCES[record['source']]),
+              ('处理说明', record['reason']), ('回复正文', record['content'])]
+    return '\n\n'.join(label + '：' + value for label, value in fields if value)
 
 
 class DiscussionModel(QAbstractListModel):
@@ -90,7 +101,10 @@ class DiscussionModel(QAbstractListModel):
 
     def detail(self, record_id):
         i = self.indices.get(record_id)
-        return self.data(self.index(i)) if i is not None else {}
+        if i is None:
+            return {}
+        record = self.data(self.index(i))
+        return dict(record, detailText=detail_text(record))
 
 
 class DiscussionFilter(QSortFilterProxyModel):

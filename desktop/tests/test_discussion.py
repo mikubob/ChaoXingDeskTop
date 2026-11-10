@@ -266,6 +266,14 @@ class DiscussionTests(unittest.TestCase):
             self.assertTrue(model.upsert(dict(record, id=str(i))))
         self.assertEqual(model.rowCount(), 2)
         self.assertEqual(model.evicted, 1)
+        detail = model.detail('2')
+        self.assertEqual(detail['id'], '2')  # Preserve identifiers for internal actions.
+        text = detail['detailText']
+        self.assertIn('讨论主题：', text)
+        self.assertIn('处理阶段：', text)
+        self.assertIn('任务点状态：', text)
+        for hidden in ('id：', 'task_id', 'run_id', 'elapsed_ms', 'concise', 'pending'):
+            self.assertNotIn(hidden, text)
         record['content'] = 'mutated'
         self.assertNotEqual(model.rows[-1]['content'], 'mutated')
 

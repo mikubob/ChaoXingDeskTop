@@ -14,8 +14,8 @@ import requests
 def ocr_init():
     """Initialize once per recovery manager, using the bundled CPU model."""
     try:
-        from ddddocr import DdddOcr
-        return DdddOcr(show_ad=False, use_gpu=False)
+        from api.ocr import CaptchaOCR
+        return CaptchaOCR()
     except Exception as exc:
         logger.warning('验证码识别组件不可用（{}），请检查完整发行目录或手动验证。', type(exc).__name__)
         return None

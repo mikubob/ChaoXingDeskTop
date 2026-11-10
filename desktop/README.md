@@ -1,20 +1,22 @@
 # 桌面版使用与开发指南
 
-**版本：0.4.2** · Windows 10 / 11 x64 · Python + PySide6 / QML · GPL-3.0
+**版本：0.5.0** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
 
-[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.4.2) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.5.0) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 本文中的命令默认在 `desktop` 目录的 PowerShell 中执行。
 
 ## 安装与升级
 
-安装包包含 Python 环境及运行依赖，默认安装到：
+安装包包含程序、Python 后台及运行依赖，默认安装到：
 
 ```text
 %LOCALAPPDATA%/Programs/ChaoxingDesktop/
 ```
 
 安装后可通过桌面或开始菜单快捷方式启动。升级前退出旧程序，再安装到原目录；安装器保留原 `installation.json`，沿用已有设置、账号、Cookie 和凭据。卸载保留个人数据。
+
+从 0.4.2 及更早的 QML 界面版本覆盖安装到 WinUI 3 版本时，安装器按 `scripts/retired-runtime-0.3.5.txt` 与 `scripts/retired-runtime-0.4.2.txt` 清理新版本已停用的旧前端文件及 0.4.2 安装包附带的源码 ZIP。清理限于清单逐项列出的安装文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
 
 如果使用完整程序目录，打开 `ChaoxingDesktop.exe` 即可。请保留 `_internal`、`ChaoxingWorker.exe` 及目录中的其他文件；后台组件由主程序启动。
 
@@ -30,9 +32,9 @@
 
 任务列表中经平台核验为「已完成」的章节任务，会立即写入 `task_completion/`，按账号、平台用户、课程、班级和章节 ID 隔离。下次启动仍读取章节目录以发现新增任务，但缓存已完成的任务保留真实名称并直接标记完成，跳过处理和逐章核验，从第一个未完成任务继续。未完成、已停止或核验失败的任务不写入完成缓存；仅有课程汇总统计不能据此跳过章节。任务结束后不额外启动全课程统计；未完成任务保留逐章验收和结束补查。任务缓存可安全删除，不作为讨论／活动提交凭据。
 
-手动核验也会同步任务缓存：确认完成时保存，未取得完成证据或章节已不存在时移除对应记录；请求失败时保留旧缓存。「任务结束后追加学习次数」独立按全部所选课程执行，不受任务完成缓存影响。
+手动核验也会同步任务缓存。确认完成时保存，未取得完成证据或章节已不存在时移除对应记录，请求失败时保留旧缓存。普通启动时，「任务结束后追加学习次数」独立按全部所选课程执行，不受任务完成缓存影响。
 
-如需排查平台重置任务或原章节新增任务点，可在「学习设置 → 章节检测与学习次数」开启「忽略完成缓存重新检查」。该选项默认关闭；开启后不按本地完成缓存跳过所选任务，按平台状态检查并更新缓存。检查为未完成时移除旧完成记录，请求失败则保留；关闭开关后恢复缓存续跑。开关随设置保存，保持开启会影响后续每次运行；不会强制重做平台已确认完成的章节。
+如需排查平台重置任务或原章节新增任务点，可在「学习设置 → 章节检测与学习次数」开启「忽略完成缓存重新检查」，再从课程列表开始新一轮任务。该选项默认关闭，开启后按平台状态检查所选任务并更新缓存。检查为未完成时移除旧完成记录，请求失败则保留。开关随设置保存，适用于普通启动。平台已确认完成的章节仍会跳过。
 
 首次体验可以选择「离线演示」，无需连接平台。
 
@@ -53,6 +55,8 @@
 在「任务与日志」查看章节、媒体与逐题结果。任务进度表示本轮处理进度；媒体达到时长后仍需平台确认，待核验状态不会等同于平台已完成。
 
 「暂停后续」阻止新的调度、答题请求和写入，在途请求及当前媒体可以继续。停止先协作取消，超时后终止后台；已经送达平台的请求不会撤回。
+
+在包含 #5 改动的 WinUI 源码构建中，点击停止并等后台退出后，可在「任务与日志」点击「继续上次任务」。当前应用会话会保留原账号、课程和已识别的任务点，跳过已确认完成的章节。续跑始终使用完成缓存，并跳过整课学习次数追加。提交结果未知时，请先到平台人工核验。0.5.0 安装包已包含该入口。
 
 验证码使用本地 CPU OCR。识别不可用或验证类型不支持时，相关章节保留待处理；可在平台页面完成验证后重新登录或导入 Cookie。
 
@@ -76,6 +80,14 @@
 - **完整 INI 导出包含当前明文密码和密钥，应留在本机。** 保存失败或检测到其他进程修改时保留原文件，不覆盖更新状态。
 - 日志先脱敏再显示与写盘，单文件约 10 MiB、总量约 100 MiB、保留 14 天。删除仅处理本应用命名的普通日志。
 - 同一数据目录仅运行一个主窗口，重复启动会唤起已有窗口。界面日志、逐题结果及后台队列有容量限制。
+
+## 0.5.0 更新与清理
+
+- 界面迁移为 WinUI 3 原生窗口（Windows App SDK 1.8，自包含非 MSIX）。原生程序通过继承的 stdin/stdout 与 Python 后台交换 JSON，不监听端口、不开放网络入口；Qt Core 仍作为后台控制器使用。
+- 任务停止后可继续：点击「继续上次任务」沿用当前应用会话的账号、课程与已识别任务点，跳过已确认完成的章节；续跑使用完成缓存并跳过整课学习次数追加。
+- 人工副本编辑、问卷文本与选项改动在输入立即标记为未保存；保存成功前关闭弹框会拦截，并明确区分「保存」与「放弃本次修改」，避免 RPC 状态同步窗口内丢失改动。
+- 移除过时的 QML 打包入口与迁移记录。保留 `--legacy-qml` 源码入口和现有回归测试，发行安装包使用 WinUI 3。
+- 未新增运行依赖，锁文件与 vendor 协议源码不变；安装包体积、数据目录结构与个人数据保留规则沿用 0.4.2。
 
 ## 0.4.1 填空与只读核验修复
 
@@ -115,10 +127,6 @@
 - 「任务与日志 → 容量」查看各显示保留／淘汰、日志积压／峰值／失败批次和导出范围。左下「版本与校验」查看运行方式和 profile、主动打开发行网页或复制不含账号／路径的版本校验说明；不自动下载、执行或宣称版本最新，也不代替实际安装包哈希核对。
 - 关闭重做／追加次数时从属参数禁用且保留；保存数值、枚举或模板错误时跳转并聚焦对应文本、多行、开关或选择控件。必要灰色文字提高对比度。最小逻辑窗口仍为 980×700，高 DPI 实机与跨屏验收仍待进行。
 
-实施验收与已知限制见 [UPGRADE_ACCEPTANCE.md](UPGRADE_ACCEPTANCE.md)。
-
-0.4.0 清理后已通过 413 项单元、7 组界面回归、四档软件缩放、冻结 worker／GUI，以及隔离目录中的全新安装、0.3.9 覆盖升级和卸载数据保留验收。安装测试禁用注册与快捷方式；并非干净虚拟机或 Windows 高 DPI 实机验收。源码与安装包由现有 provenance 门槛绑定。
-
 ## 源码运行
 
 开发与构建环境为 **Windows x64、Python 3.13.9**。准备运行环境：
@@ -129,7 +137,7 @@ python -m venv .venv
 .venv/Scripts/python.exe run.py
 ```
 
-`run.py` 是主程序入口，后台进程使用同一入口的 `--worker` 模式。界面使用 Qt Quick / QML，以及 FluentWinUI3 和 Fusion / Basic 回退样式。
+`run.py` 是主程序入口，默认启动原生 WinUI 3 界面。首次运行前安装 .NET 8 SDK 并执行 `./scripts/build-winui.ps1`。后台进程使用 `--bridge` / `--worker` 模式，保留 Python 业务层与 Qt Core 模型；文件选择和界面渲染由 WinUI 负责。原 QML 参考界面可通过显式 `--legacy-qml` 启动。[原生界面开发与构建](winui/README.md)
 
 ## 测试
 
@@ -169,32 +177,36 @@ python -m venv .venv-build
 ### 构建程序
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.4.2/ChaoxingDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.5.0/ChaoxingDesktop
 ```
 
-构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后运行单元与源码界面回归、执行 PyInstaller，最后验收冻结 worker 与 QML 界面。
+构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后运行单元回归、发布自包含 WinUI 3 界面、使用 PyInstaller 打包 Python 后台，最后验收冻结 worker 与原生界面。开发机还需要 .NET 8 SDK。
 
-程序输出至 `dist/release-0.4.2/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
+程序输出至 `dist/release-0.5.0/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
 
-准备 [NSIS 编译器](https://nsis.sourceforge.io/Download)，将下方路径替换为本机的 `makensis.exe`：
+先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与单元、worker、GUI 三项验收标记，因此必须先完成带 GUI 验收的构建：
 
 ```powershell
-.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.4.2/ChaoxingDesktop --compiler "C:/Tools/NSIS/makensis.exe"
+.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.5.0/ChaoxingDesktop --compiler "desktop/build/installer-tools/nsis-3.13/nsis-3.13/makensis.exe"
 ```
+
+`--compiler` 指向本机的 `makensis.exe`（[NSIS 下载](https://nsis.sourceforge.io/Download)），相对路径以 `desktop` 为基准；`--app` 默认不推断，必须显式给出已验收的程序目录，`--output` 默认写入项目根目录的 `release/`。仓库内 `desktop/build/` 下的 NSIS 与 .NET SDK 属本机工具，不进入源码包，也不随安装包分发。
 
 产物默认写入项目根目录的 `release/`：
 
 ```text
-ChaoxingDesktop-0.4.2-Setup-win-x64.exe
-ChaoxingDesktop-0.4.2-source.zip
-ChaoxingDesktop-0.4.2-installer-SHA256.json
+ChaoxingDesktop-0.5.0-Setup-win-x64.exe
+ChaoxingDesktop-0.5.0-source.zip
+ChaoxingDesktop-0.5.0-installer-SHA256.json
 ```
 
 安装包包含完整程序、对应源码 ZIP、许可和第三方声明，NSIS 编译器不随包分发。生成安装包前会核对程序版本、源码与产物哈希，以及单元、worker、GUI 验收标记；跳过 GUI 的构建不能用于正式发布。修改构建输入后，需要重新构建和验收。
 
-安装器与便携打包共用 `scripts/source_bundle.py` 的公共文件清单，仅额外收录工作台验收记录和副本提交边界合同，不收集历史计划、截图、用户数据或临时文件。升级时只删除 `scripts/retired-runtime-0.3.5.txt` 列出的具体废弃运行文件，不使用通配符或递归删除，也不删除新程序仍包含的文件。
+安装器与便携打包共用 `scripts/source_bundle.py` 的公共文件清单：只按点名清单收录构建与运行必需的公开资源（含 `assets/app.ico` 这一原生编译输入），不收集历史计划、截图、用户数据或临时文件。升级时只删除 `scripts/retired-runtime-0.3.5.txt` 与 `scripts/retired-runtime-0.4.2.txt` 列出的具体废弃运行文件，不使用通配符或递归删除，也不删除新程序仍包含的文件。
+
+隔离目录中的安装验收可用 `tests/installer_smoke.ps1`：`-PreviousInstaller` 传入任一旧安装包即可验证通用覆盖升级；只有当该安装包是已记录的 0.4.2 QML 载荷（按安装包 SHA-256 或 profile 识别）或显式加 `-ExpectRetiredPayload` 时，才会额外断言退役清单中的旧前端文件已被清理。
 
 ## 0.3.9 更新与清理
 

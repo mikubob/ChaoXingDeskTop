@@ -158,6 +158,12 @@ class Controller(QObject):
             return (isinstance(event.get('id'), str) and len(event['id']) <= 256
                     and isinstance(event.get('indices'), list) and 0 < len(event['indices']) <= 64
                     and all(type(i) is int and 0 <= i < 64 for i in event['indices']))
+        if kind == 'job_scope':
+            jobs = event.get('jobs')
+            return (isinstance(event.get('id'), str) and 0 < len(event['id']) <= 256
+                    and isinstance(jobs, list) and len(jobs) <= 1000
+                    and all(isinstance(job, list) and len(job) == 3
+                            and all(isinstance(v, str) and len(v) <= 256 for v in job) for job in jobs))
         if kind == 'record_verification':
             return (event.get('kind') in ('discussion', 'activity') and
                     event.get('participation') in ('existing', 'absent', 'unknown') and
