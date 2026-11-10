@@ -50,6 +50,8 @@ public sealed partial class MainWindow
             await CheckSettingsReviewRegressions();
             await CheckBankHealthReviewRegression();
             await CheckModalReviewRegressions();
+            await CheckScopeResetDetailRace();
+            await CheckNativeDialogControls();
             await CheckThemes();
             ShowCourseView(true, animate: false);
             if (showingMyCourses || CoursesReady || courseViews[1].Visibility != Visibility.Collapsed)
@@ -134,6 +136,10 @@ public sealed partial class MainWindow
             if (J.I(Summary, "total") == 0) throw new InvalidOperationException("章节任务没有同步。");
             await CheckMonitorStability();
             await CheckRecordDetails();
+            await CheckResultFiltersAndDiagnostics();
+            await CheckRowClickAfterReset();
+            await CheckAccountSwitchScopeReset();
+            await CheckOfflineStartScopeReset();
             await CheckResumeEntry();
             var discussion = J.A(backend.State["discussions"]).FirstOrDefault();
             if (discussion != null)
@@ -166,6 +172,323 @@ public sealed partial class MainWindow
         Environment.ExitCode = success ? 0 : 1;
         if (!closing) await Call("discardAndClose");
         await FinishCloseAsync();
+    }
+
+private static T? FindDescendant<T>(DependencyObject root, Func<T, bool> match) where T : FrameworkElement
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T typed && match(typed)) return typed;
+            if (FindDescendant(child, match) is { } nested) return nested;
+        }
+        return null;
+    }
+
+    // Exercises the real completion dialog and the start-confirmation dialog
+    // with native button clicks, then records which RPCs the product's own
+    // handlers issued. The prompts are injected locally (no platform call);
+    // only the buttons, handlers and RPC path are under test.
+    private async Task CheckNativeDialogControls()
+    {
+        smokeStep = "native-dialogs";
+        var report = new Dictionary<string, object>();
+        bool originalIntercept = smokeInterceptInput;
+        var originalInput = backend.State["input"]?.DeepClone();
+        string originalSignature = inputSignature;
+        try
+        {
+            smokeInterceptInput = true;
+
+            // 1) Completion prompt: incomplete primary press must stay open,
+            //    a complete press must reply with the typed answer, and the
+            //    skip button must reply empty without reusing the answer.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                smokeCalls.Clear();
+                var input = new JsonObject
+                {
+                    ["title"] = "合成人工补全", ["type"] = "text", ["kind"] = "text",
+                    ["message"] = $"合成题目（第 {pass + 1} 轮）：请填写答案。", ["options"] = new JsonArray(),
+                };
+                backend.State["input"] = input.DeepClone();
+                RefreshInput();
+                await WaitFor(() => manualDialog?.IsLoaded == true, 10);
+                var dialog = manualDialog!;
+                var answer = FindDescendant<TextBox>(dialog, t => t.PlaceholderText == "填写答案")
+                             ?? throw new InvalidOperationException("人工补全缺少答案输入框。");
+                var use = FindDescendant<Button>(dialog, b => b.Content?.ToString() == "使用答案")
+                          ?? throw new InvalidOperationException("人工补全缺少「使用答案」按钮。");
+                var skip = FindDescendant<Button>(dialog, b => b.Content?.ToString() == "跳过此题")
+                           ?? throw new InvalidOperationException("人工补全缺少「跳过此题」按钮。");
+                if (pass == 0)
+                {
+                    await Click(use);
+                    await Task.Delay(150);
+                    if (smokeCalls.Count != 0 || manualDialog != dialog || !dialog.IsLoaded)
+                        throw new InvalidOperationException("空白答案竟提交或关闭了人工补全。");
+                    answer.Text = "合成答案";
+                    await Click(use);
+                    await WaitFor(() => smokeCalls.Count > 0, 10);
+                    if (smokeCalls[0] != "reply 合成答案|False")
+                        throw new InvalidOperationException("「使用答案」未提交填写的答案：" + smokeCalls[0]);
+                    report["completionPrimary"] = smokeCalls.ToArray();
+                }
+                else
+                {
+                    answer.Text = "不应提交的答案";
+                    await Click(skip);
+                    await WaitFor(() => smokeCalls.Count > 0, 10);
+                    if (smokeCalls[0] != "reply |False")
+                        throw new InvalidOperationException("「跳过此题」提交了答案而非空答案：" + smokeCalls[0]);
+                    report["completionSkip"] = smokeCalls.ToArray();
+                }
+                // Closing follows the product's own ClearInput -> inputChanged path.
+                backend.State["input"] = new JsonObject();
+                RefreshInput();
+                await WaitFor(() => manualDialog == null, 10);
+            }
+
+            // 2) Start confirmation: the production handler builds and waits on
+            //    a real dialog; its primary and cancel buttons must reach the
+            //    matching backend commands.
+            foreach (var (label, expected) in new[] { ("按此策略开始", "confirmStartTasks"), ("取消", "cancelStartTasks") })
+            {
+                smokeCalls.Clear();
+                HandleEvent("startConfirmationRequested", new JsonArray(J.S(backend.State, "strategySummary", "合成策略摘要")));
+                await WaitFor(() => currentDialog?.IsLoaded == true && currentDialog.Title?.ToString() == "确认本轮提交策略", 10);
+                var button = FindDescendant<Button>(currentDialog!, b => b.Content?.ToString() == label)
+                             ?? throw new InvalidOperationException("启动确认缺少「" + label + "」按钮。");
+                await Click(button);
+                await WaitFor(() => smokeCalls.Count > 0, 10);
+                if (smokeCalls[0].TrimEnd() != expected)
+                    throw new InvalidOperationException($"「{label}」应发送 {expected}，实际 {smokeCalls[0]}。");
+                report[expected] = smokeCalls.ToArray();
+                await WaitFor(() => currentDialog == null, 10);
+            }
+            await WaitFor(() => !processingDialogs && dialogs.Count == 0, 10);
+            await File.WriteAllTextAsync(Path.Combine(smokeDestination!, "native-dialogs.json"),
+                JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        finally
+        {
+            smokeInterceptInput = originalIntercept;
+            inputSignature = originalSignature;
+            backend.State["input"] = originalInput;
+            manualDialog?.Hide();
+            if (currentDialog != null) currentDialog.Hide();
+            await WaitFor(() => !processingDialogs, 10);
+        }
+    }
+
+    private async Task CheckResultFiltersAndDiagnostics()
+    {
+        smokeStep = "result-filters";
+        // Chinese labels must map to the exact internal keys the backend filters on.
+        (string Name, string[] Labels, string[] Values)[] combos =
+        [
+            ("attentionStages", ["全部需处理", "平台待确认", "提交未知", "失败／跳过", "草稿／人工"], ["", "platform", "unknown", "failed", "manual"]),
+            ("discussionsStages", ["全部记录", "本地草稿", "已发布", "本人已回复", "发布未知", "待处理"], ["", "draft", "published", "existing", "publish_unknown", "pending"]),
+            ("activitiesStages", ["全部记录", "本地草稿", "已确认提交", "本人已参与", "提交未知", "待处理", "平台拒绝"], ["", "draft", "submitted", "existing", "submit_unknown", "pending", "rejected"]),
+        ];
+        foreach (var (name, labels, values) in combos)
+        {
+            var combo = VisualChild<ComboBox>(pages[4], name) ?? throw new InvalidOperationException("结果筛选缺少 " + name + " 下拉。");
+            if (combo.DisplayMemberPath != "Label") throw new InvalidOperationException(name + " 未使用中文标签。");
+            var items = combo.Items.Cast<object>().ToArray();
+            for (int i = 0; i < labels.Length; i++)
+            {
+                var label = items[i].GetType().GetProperty("Label")?.GetValue(items[i])?.ToString();
+                var value = items[i].GetType().GetProperty("Value")?.GetValue(items[i])?.ToString();
+                if (label != labels[i] || value != values[i])
+                    throw new InvalidOperationException($"{name} 第 {i} 项应为 {labels[i]}/{values[i]}，实际 {label}/{value}。");
+            }
+        }
+
+        // A chapter row must reach that chapter's question results in one step.
+        var tasks = resultLists["tasks"];
+        if (tasks.Items.Count == 0) throw new InvalidOperationException("章节任务为空，无法验证逐题入口。");
+        tasks.ScrollIntoView(tasks.Items[0]);
+        await WaitFor(() => tasks.ContainerFromIndex(0) != null);
+        var container = (FrameworkElement)tasks.ContainerFromIndex(0)!;
+        var jump = FindDescendant<Button>(container, button => button.Content?.ToString() == "题目")
+                   ?? throw new InvalidOperationException("章节行缺少「题目」入口。");
+        string chapterId = J.S(((RecordRow)tasks.Items[0]).Data, "id");
+        await Click(jump);
+        if (questionTask != chapterId || resultTabs?.SelectedIndex != questionsTabIndex)
+            throw new InvalidOperationException("章节行未能定位该章的逐题结果。");
+        var scope = VisualChild<TextBlock>(pages[4], "QuestionScope") ?? throw new InvalidOperationException("逐题页缺少筛选范围提示。");
+        var clear = VisualChild<Button>(pages[4], "QuestionScopeClear") ?? throw new InvalidOperationException("逐题页缺少清除筛选按钮。");
+        if (scope.Text != "已筛选章节" || clear.Visibility != Visibility.Visible)
+            throw new InvalidOperationException("章节筛选未显示为已筛选状态。");
+        await Click(clear);
+        if (questionTask.Length != 0 || scope.Text != "全部章节" || clear.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("清除章节筛选后未恢复全部章节。");
+
+        // A hand-typed chapter id is the same scope as the list button, and
+        // clearing it clears the text too, so no stale filter is left behind.
+        var typed = FindDescendant<TextBox>(pages[4], box => box.PlaceholderText == "按章节任务 ID 筛选")!;
+        typed.Text = "typed-task";
+        await WaitFor(() => questionTask == "typed-task");
+        if (scope.Text != "已筛选章节" || clear.Visibility != Visibility.Visible)
+            throw new InvalidOperationException("手输章节任务 ID 未成为筛选范围。");
+        await Click(clear);
+        await WaitFor(() => typed.Text.Length == 0);
+        if (questionTask.Length != 0 || scope.Text != "全部章节")
+            throw new InvalidOperationException("清除章节筛选未清掉手输的任务 ID。");
+
+        // The scope reset clears the retained filters and closes a stale detail,
+        // while the queued manual-answer dialog keeps its own gate.
+        var pending = VisualChild<CheckBox>(pages[4], "QuestionPending")!;
+        var search = VisualChild<TextBox>(pages[4], "筛选章节任务 ID") ?? FindDescendant<TextBox>(pages[4], box => box.PlaceholderText == "按章节任务 ID 筛选")!;
+        var stages = VisualChild<ComboBox>(pages[4], "discussionsStages")!;
+        pending.IsChecked = true; search.Text = chapterId; stages.SelectedIndex = 2;
+        var chapter = new JsonObject
+        {
+            ["title"] = "1.2 大学体育课程学习的规定", ["course"] = "大学体育", ["kind"] = "章节",
+            ["status"] = "success", ["statusText"] = "已完成", ["courseId"] = "10001",
+            ["pointId"] = "20001", ["clazzId"] = "15800725",
+        };
+        var shown = ShowRecord("tasks", chapter);
+        await WaitFor(() => currentDialog?.IsLoaded == true);
+        HandleEvent("questionsReset", new JsonArray());
+        await WaitFor(() => currentDialog == null);
+        await shown;
+        if (pending.IsChecked == true || search.Text.Length != 0 || stages.SelectedIndex != 0 || questionTask.Length != 0)
+            throw new InvalidOperationException("作用域切换未清空结果筛选。");
+        if (scope.Text != "全部章节") throw new InvalidOperationException("作用域切换未恢复全部章节。");
+
+        // The question detail must stay readable and copyable, and an evicted
+        // record must explain itself instead of showing raw fields.
+        var question = new JsonObject
+        {
+            ["title"] = "合成题目", ["options"] = "A. 甲\nB. 乙", ["answer"] = "B", ["reason"] = "命中题库",
+            ["source"] = "ai", ["sourceText"] = "AI", ["match_mode"] = "exact",
+            ["elapsed_ms"] = 120, ["ai_elapsed_ms"] = 300, ["manual_elapsed_ms"] = 0,
+            ["ai_requests"] = 2, ["ai_retries"] = 1,
+            ["attempts"] = new JsonArray(new JsonObject
+            {
+                ["provider"] = "TikuGo", ["status"] = "ok", ["reason"] = "返回单条候选",
+                ["returned_title"] = "合成题目", ["candidate"] = "B", ["elapsed_ms"] = 120,
+            }),
+        };
+        string detail = QuestionDetailText(question);
+        foreach (var expected in new[] { "选项：", "A. 甲", "采用答案：", "B", "原因：命中题库", "来源：AI", "匹配：原文匹配",
+                     "耗时：题库 120 ms；AI 300 ms；人工 0 ms", "AI 请求 2 次，重试 1 次", "服务记录：", "TikuGo · 120 ms",
+                     "返回题干：合成题目", "候选答案：B" })
+            if (!detail.Contains(expected)) throw new InvalidOperationException("逐题详情缺少「" + expected + "」。");
+        if (QuestionDetailText(new JsonObject()).Contains("attempts"))
+            throw new InvalidOperationException("已淘汰记录泄露了内部字段。");
+        var questionRow = new JsonObject { ["id"] = "missing-question", ["title"] = "合成题目" };
+        var questionShown = ShowRecord("questions", questionRow);
+        await WaitFor(() => currentDialog?.IsLoaded == true);
+        if (currentDialog!.SecondaryButtonText != "复制详情" || ((ScrollViewer)currentDialog.Content).Content is not TextBlock body ||
+            !body.IsTextSelectionEnabled || !body.Text.Contains("该记录已被清除或淘汰"))
+            throw new InvalidOperationException("逐题详情不可读或未处理已淘汰记录。");
+        currentDialog.Hide();
+        await questionShown;
+
+        // The task page must render the diagnostics the backend already sends.
+        var summary = (JsonObject)backend.State["summary"]!;
+        var original = summary.DeepClone();
+        try
+        {
+            summary["aiUsage"] = new JsonObject { ["requests"] = 3, ["limit"] = 5, ["known"] = 1, ["unknown"] = 1, ["tokens"] = 42 };
+            summary["aiWarning"] = "本次操作 AI 请求已达硬上限；后续请求将留待处理。";
+            summary["verificationProgress"] = new JsonObject { ["phase"] = "run", ["completed"] = 1, ["total"] = 2, ["reads"] = 7, ["failures"] = 0, ["elapsed_ms"] = 1500 };
+            summary["questionCount"] = 3;
+            summary["questionStats"] = new JsonObject { ["query_attempts"] = 4, ["requests"] = 5, ["candidates"] = 2, ["resolved"] = 1, ["cache"] = 1, ["ai"] = 1, ["manual"] = 0, ["random"] = 0 };
+            Refresh(new JsonObject());
+            var usage = VisualChild<TextBlock>(pages[4], "AiUsageText") ?? throw new InvalidOperationException("任务页缺少 AI 用量统计。");
+            var warning = VisualChild<TextBlock>(pages[4], "AiWarningText") ?? throw new InvalidOperationException("任务页缺少 AI 警告。");
+            var verification = VisualChild<TextBlock>(pages[4], "VerificationText") ?? throw new InvalidOperationException("任务页缺少核验进度。");
+            var stats = VisualChild<TextBlock>(pages[4], "questionsStats") ?? throw new InvalidOperationException("逐题页缺少统计行。");
+            if (!usage.Text.Contains("本次操作 AI 请求 3 / 5") || !usage.Text.Contains("服务返回 token 42") || !usage.Text.Contains("1 次用量未知"))
+                throw new InvalidOperationException("AI 用量统计未按后台数据渲染：" + usage.Text);
+            if (warning.Visibility != Visibility.Visible || !warning.Text.Contains("硬上限"))
+                throw new InvalidOperationException("AI 警告未显示。");
+            if (verification.Visibility != Visibility.Visible || verification.Text != "核验已处理 1/2 章 · 章节／卡片读取 7 · 失败 0 · 2 秒")
+                throw new InvalidOperationException("核验进度未按后台数据渲染：" + verification.Text);
+            if (!stats.Text.Contains("最近 3 条") || !stats.Text.Contains("题库轮次 4") || !stats.Text.Contains("已采用 1"))
+                throw new InvalidOperationException("逐题统计未按后台数据渲染：" + stats.Text);
+        }
+        finally
+        {
+            backend.State["summary"] = original!.DeepClone();
+            Refresh(new JsonObject());
+        }
+
+        // Logs append in place: following keeps the tail, reading up holds the
+        // position, and "到底部" restores following.
+        var originalLogs = backend.State["logs"]?.DeepClone();
+        try
+        {
+            var expander = FindDescendant<Expander>(pages[4], _ => true) ?? throw new InvalidOperationException("任务页缺少日志面板。");
+            expander.IsExpanded = true;
+            // The panel content is realised when the expander opens, so the list
+            // only exists in the visual tree after that layout pass.
+            await WaitFor(() => VisualChild<ListView>(pages[4], "LogList") != null);
+            var lines = new JsonArray();
+            for (int i = 0; i < 80; i++) lines.Add((i == 2 ? "ERROR " : i == 3 ? "WARNING " : "") + "离线验收日志 " + i);
+            backend.State["logs"] = lines;
+            Refresh(new JsonObject { ["logs"] = true });
+            var list = VisualChild<ListView>(pages[4], "LogList") ?? throw new InvalidOperationException("日志区缺少列表。");
+            await WaitFor(() => list.Items.Count == 80);
+            var scroller = VisualChild<ScrollViewer>(list) ?? throw new InvalidOperationException("日志列表缺少滚动区。");
+            await WaitFor(() => scroller.ScrollableHeight > 0);
+            if (logEntries[2].Brush.Color != ThemeBrush("ErrorBrush").Color || logEntries[3].Brush.Color != ThemeBrush("WarningBrush").Color)
+                throw new InvalidOperationException("日志级别着色不正确。");
+            await Task.Delay(500);
+            if (!followLogs || scroller.VerticalOffset < scroller.ScrollableHeight - 2)
+                throw new InvalidOperationException("跟随最新时日志未停在底部。");
+            scroller.ChangeView(null, 0, null, true);
+            await Task.Delay(600);
+            if (followLogs || VisualChild<CheckBox>(pages[4], "LogFollow")?.IsChecked != false)
+                throw new InvalidOperationException("上滚阅读未取消跟随。");
+            lines.Add("ERROR 新日志 A"); lines.Add("WARNING 新日志 B");
+            Refresh(new JsonObject { ["logs"] = true });
+            await WaitFor(() => list.Items.Count == 82);
+            if (scroller.VerticalOffset > 4) throw new InvalidOperationException("新增日志抢走了阅读位置。");
+            await Click(VisualChild<Button>(pages[4], "LogBottom") ?? throw new InvalidOperationException("日志区缺少到底部按钮。"));
+            await WaitFor(() => scroller.VerticalOffset >= scroller.ScrollableHeight - 2);
+            if (!followLogs) throw new InvalidOperationException("到底部未恢复跟随。");
+            lines.Add("离线验收日志 82");
+            Refresh(new JsonObject { ["logs"] = true });
+            await WaitFor(() => list.Items.Count == 83);
+            await WaitFor(() => scroller.VerticalOffset >= scroller.ScrollableHeight - 2);
+
+            // A full capacity window rolls: the shown tail becomes the head of
+            // the new snapshot. Only the evicted head may go; the retained rows
+            // keep their objects and the reader keeps the place.
+            var clean = new JsonArray();
+            for (int i = 0; i < 80; i++) clean.Add("窗口日志 " + i);
+            backend.State["logs"] = clean;
+            Refresh(new JsonObject { ["logs"] = true });
+            if (list.Items.Count != 80 || logEntries.Count != 80)
+                throw new InvalidOperationException("日志窗口重建后行数不符：items=" + list.Items.Count + ", entries=" + logEntries.Count);
+            scroller.ChangeView(null, 40, null, true);
+            await Task.Delay(600);
+            if (followLogs) throw new InvalidOperationException("滚动到日志中段后仍在跟随。");
+            double before = scroller.VerticalOffset;
+            var retained = logEntries[logEntries.Count - 1];
+            var rolled = new JsonArray();
+            for (int i = 40; i < 120; i++) rolled.Add("窗口日志 " + i);
+            backend.State["logs"] = rolled;
+            Refresh(new JsonObject { ["logs"] = true });
+            if (logEntries.Count != 80 || logEntries[0].Text != "窗口日志 40")
+                throw new InvalidOperationException("滚动窗口未按重叠区淘汰：count=" + logEntries.Count +
+                    ", first=" + (logEntries.Count > 0 ? logEntries[0].Text : "-"));
+            if (!ReferenceEquals(logEntries[39], retained))
+                throw new InvalidOperationException("滚动窗口重建了未淘汰的行对象。");
+            if (Math.Abs(scroller.VerticalOffset - before) > 40)
+                throw new InvalidOperationException("滚动窗口把阅读位置跳到了底部。");
+        }
+        finally
+        {
+            backend.State["logs"] = originalLogs ?? new JsonArray();
+            Refresh(new JsonObject { ["logs"] = true });
+        }
     }
 
     private async Task CheckSettingsReviewRegressions()
@@ -524,6 +847,243 @@ public sealed partial class MainWindow
             }
         }
         finally { currentDialog?.Hide(); await draft; backend.State["uiFeedback"] = originalFeedback; backend.State["draftEditable"] = originalEditable; }
+
+        // draftDirty only reaches the window on a later state flush, so an edit made
+        // and then immediately closed must still be caught by the local edit flag.
+        var raceDraft = ShowDraft(new JsonObject { ["kind"] = "discussion", ["content"] = "原始内容",
+            ["source"] = new JsonObject { ["title"] = "编辑后立即关闭" } });
+        try
+        {
+            await WaitFor(() => currentDialog?.IsLoaded == true);
+            var dialog = currentDialog!;
+            backend.State["draftEditable"] = true; backend.State["draftDirty"] = false;
+            Refresh(new JsonObject());
+            var editor = VisualChild<TextBox>(dialog) ?? throw new InvalidOperationException("草稿编辑器缺失。");
+            editor.Text = "用户刚输入的改动";
+            await Task.Delay(20);   // Lets the edit handler run; the state flush is still up to 100 ms away.
+            // Reproduce the window deterministically: the backend has already
+            // accepted the edit, but its broadcast dirty flag has not arrived yet.
+            backend.State["draftDirty"] = false;
+            // Positive control: with the state looking clean, only the local edit
+            // flag can block the close, so a pass proves the edit was noticed.
+            var close = FindDescendant<Button>(dialog, button => button.Content?.ToString() == "关闭")
+                ?? throw new InvalidOperationException("草稿弹窗缺少关闭按钮。");
+            await Click(close);
+            await Task.Delay(300);
+            if (currentDialog != dialog || !dialog.IsLoaded)
+                throw new InvalidOperationException("编辑后立即关闭丢失了未保存的改动。");
+            if (J.B(backend.State, "draftDirty"))
+                throw new InvalidOperationException("竞争验收前提被破坏：关闭时 dirty 状态已经同步。");
+            // The blocked dialog must still offer the explicit discard path.
+            var discard = FindDescendant<Button>(dialog, button => button.Content?.ToString() == "放弃本次修改")
+                ?? throw new InvalidOperationException("未保存改动被拦截后没有提供放弃入口。");
+            await Click(discard);
+            await WaitFor(() => currentDialog == null, 10);
+        }
+        finally { currentDialog?.Hide(); await raceDraft; backend.State["draftEditable"] = originalEditable; }
+    }
+
+    // Runs only where the offline run has populated the result lists: the
+    // token must come from the product's own ItemClick handler, so a synthetic
+    // enqueue would prove nothing.
+    private async Task CheckRowClickAfterReset()
+    {
+        smokeStep = "row-click reset";
+        foreach (var (kind, tab) in new[] { ("tasks", 0), ("questions", 1), ("discussions", 2), ("activities", 3) })
+        {
+            if (rowCollections[kind].Count == 0) throw new InvalidOperationException(kind + " 没有可用于真实点击的行。");
+            if (resultTabs != null) resultTabs.SelectedIndex = tab;
+            var list = resultLists[kind];
+            list.ScrollIntoView(list.Items[0]);
+            await WaitFor(() => list.ContainerFromIndex(0) != null, 10);
+            Root.UpdateLayout();
+
+            // Positive control: without a reset the very same click must open
+            // the detail, otherwise the drop below proves nothing.
+            var opener = FrameworkElementAutomationPeer.CreatePeerForElement((FrameworkElement)list.ContainerFromIndex(0)!);
+            if (opener?.GetPattern(PatternInterface.Invoke) is not IInvokeProvider open)
+                throw new InvalidOperationException(kind + " 首行不支持真实点击。");
+            open.Invoke();
+            await WaitFor(() => currentDialog?.IsLoaded == true, 15);
+            currentDialog!.Hide();
+            await WaitFor(() => !processingDialogs, 15);
+            if (currentDialog != null) throw new InvalidOperationException(kind + " 对照点击的详情没有关闭。");
+
+            // Same click, but the scope resets while the detail waits behind
+            // another modal. The token captured at click time must drop it.
+            var blocker = Dialog("阻断弹窗", Text("合成阻断", 12));
+            var blocking = ShowModal(blocker);
+            await WaitFor(() => ReferenceEquals(currentDialog, blocker) && blocker.IsLoaded);
+            var container = (DependencyObject?)list.ContainerFromIndex(0)
+                ?? throw new InvalidOperationException(kind + " 首行没有生成容器，无法点击。");
+            var peer = FrameworkElementAutomationPeer.CreatePeerForElement((FrameworkElement)container);
+            if (peer?.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
+                throw new InvalidOperationException(kind + " 首行不支持真实点击。");
+            invoke.Invoke();
+            // Wait until the product's own click handler has actually enqueued
+            // the detail queue (and drained it) behind the blocking modal, so
+            // the reset below genuinely lands while it is waiting on the gate.
+            await WaitFor(() => processingDialogs || dialogs.Count > 0, 5);
+            await WaitFor(() => dialogs.Count == 0, 5);
+            HandleEvent("questionsReset", new JsonArray());
+            blocker.Hide();
+            await blocking;
+            await WaitFor(() => !processingDialogs, 15);
+            if (currentDialog != null) throw new InvalidOperationException(kind + " 复位后仍打开了排队中的旧详情。");
+        }
+        if (resultTabs != null) resultTabs.SelectedIndex = 0;
+        smokeStep = "row-click reset complete";
+    }
+
+    private async Task CheckScopeResetDetailRace()
+    {
+        smokeStep = "scope-reset detail race";
+        var originalInput = backend.State["input"]?.DeepClone();
+        string originalSignature = inputSignature;
+        try
+        {
+            // (1) A detail RPC still in flight when the scope resets belongs to
+            // the discarded scope and must not open its dialog afterwards.
+            var stale = ShowRecord("activities", new JsonObject { ["id"] = "synthetic-activity", ["title"] = "合成活动详情" });
+            HandleEvent("questionsReset", new JsonArray());
+            await Task.Delay(400);
+            if (currentDialog != null) throw new InvalidOperationException("作用域复位后仍打开了旧详情弹窗。");
+            await stale;
+            if (currentDialog != null) throw new InvalidOperationException("旧详情在复位后迟开。");
+
+            // (2) The same detail queued behind another modal must be dropped
+            // when the reset arrives during that wait.
+            var blocker = Dialog("阻断弹窗", Text("合成阻断", 12));
+            var blocking = ShowModal(blocker);
+            await WaitFor(() => ReferenceEquals(currentDialog, blocker) && blocker.IsLoaded);
+            var queued = ShowRecord("discussions", new JsonObject { ["id"] = "synthetic-discussion", ["title"] = "合成讨论详情" });
+            await Task.Delay(100);
+            HandleEvent("questionsReset", new JsonArray());
+            blocker.Hide();
+            await blocking;
+            await queued;
+            await Task.Delay(200);
+            if (currentDialog != null) throw new InvalidOperationException("复位后排队中的旧详情仍然弹出。");
+
+            // (3) Real row clicks are verified on populated lists once the
+            // offline demo run has produced rows; see CheckRowClickAfterReset.
+
+            // (4) A manual-answer dialog owns its own gate and keeps working
+            // through the same reset.
+            var input = new JsonObject { ["title"] = "合成人工问题", ["type"] = "text", ["kind"] = "text" };
+            backend.State["input"] = input.DeepClone(); inputSignature = "scope-reset-manual";
+            Task? manual = null;
+            EnqueueDialog(async () => { manual = ShowInput(input, "scope-reset-manual"); await manual; });
+            await WaitFor(() => manualDialog?.IsLoaded == true);
+            var shown = manualDialog!;
+            HandleEvent("questionsReset", new JsonArray());
+            await Task.Delay(150);
+            if (!ReferenceEquals(manualDialog, shown) || !shown.IsLoaded)
+                throw new InvalidOperationException("作用域复位关闭了人工补全弹窗。");
+            if (shown.PrimaryButtonText != "使用答案" || shown.SecondaryButtonText != "跳过此题")
+                throw new InvalidOperationException("人工补全弹窗的按钮在复位后不可用。");
+            backend.State["input"] = null; inputSignature = originalSignature;
+            shown.Hide();
+            if (manual != null) await manual;
+        }
+        finally
+        {
+            inputSignature = originalSignature;
+            backend.State["input"] = originalInput;
+            manualDialog?.Hide();
+            await WaitFor(() => !processingDialogs);
+        }
+        smokeStep = "scope-reset detail race complete";
+    }
+
+    // Real account switch through the product's own ComboBox handler. The two
+    // accounts are created entirely offline: the isolated profile imports two
+    // synthetic Cookie files through fileAction('import_cookie'); no network,
+    // no real credential, no pre-seeded profile.
+    private async Task CheckAccountSwitchScopeReset()
+    {
+        smokeStep = "account switch reset";
+        Directory.CreateDirectory(smokeDestination!);
+        string firstCookie = Path.Combine(smokeDestination!, "synthetic-account-1.txt");
+        string secondCookie = Path.Combine(smokeDestination!, "synthetic-account-2.txt");
+        await File.WriteAllTextAsync(firstCookie, "_uid=synthetic-uid-1; session=synthetic-1");
+        await File.WriteAllTextAsync(secondCookie, "_uid=synthetic-uid-2; session=synthetic-2");
+        await Call("addAccount");
+        await Task.Delay(100);
+        await Call("setValue", "common", "username", "合成账号一");
+        await backend.Call("fileAction", new object?[] { "import_cookie" }, firstCookie);
+        await Call("addAccount");
+        await Task.Delay(100);
+        await Call("setValue", "common", "username", "合成账号二");
+        await backend.Call("fileAction", new object?[] { "import_cookie" }, secondCookie);
+        await WaitFor(() => J.A(backend.State["accountRows"]).Count() == 2, 15);
+        var rows = J.A(backend.State["accountRows"]).ToArray();
+        string firstId = J.S(rows[0], "id"), secondId = J.S(rows[1], "id");
+        if (firstId.Length == 0 || secondId.Length == 0 || firstId == secondId)
+            throw new InvalidOperationException("合成账号未生成两个不同的本机账号。");
+        // Establish the first account as the old scope, with real offline data.
+        await Call("switchAccount", firstId);
+        await WaitFor(() => J.S(Summary, "activeAccount") == firstId, 20);
+        await Call("loadDemo");
+        await WaitFor(() => !Busy && J.I(Summary, "courseCount") == 3, 30);
+        await Call("selectVisible", true);
+        await WaitFor(() => J.I(Summary, "selectedCount") == 3, 20);
+        await Call("startTasks");
+        await WaitFor(() => !Busy && resultLists["questions"].Items.Count > 0, 50);
+        int oldQuestions = resultLists["questions"].Items.Count;
+        // A retained filter and an open detail belong to the old account scope.
+        resultFilters["questions"].Search.Text = "合成筛选关键字";
+        await Task.Delay(150);
+        var stale = ShowRecord("tasks", rowCollections["tasks"][0].Data);
+        await WaitFor(() => currentDialog?.IsLoaded == true, 15);
+        var staleDialog = currentDialog!;
+        // Real selection change on the product control, not a direct RPC.
+        var accountControl = accounts ?? throw new InvalidOperationException("账号下拉框未创建。");
+        var target = ((IEnumerable<AccountItem>)accountControl.ItemsSource).FirstOrDefault(n => n.Id == secondId)
+                     ?? throw new InvalidOperationException("账号下拉框缺少第二个合成账号。");
+        accountControl.SelectedItem = target;
+        await WaitFor(() => J.S(Summary, "activeAccount") == secondId, 20);
+        await WaitFor(() => currentDialog == null, 20);
+        await stale;
+        if (staleDialog.IsLoaded) throw new InvalidOperationException("切换账号后旧详情仍然打开。");
+        if (J.I(Summary, "courseCount") != 0 || courses?.Items.Count > 0) throw new InvalidOperationException("切换账号后旧课程没有清空。");
+        if (J.B(Summary, "demo")) throw new InvalidOperationException("切换账号后旧演示作用域没有清空。");
+        if (resultLists["questions"].Items.Count != 0 || resultLists["tasks"].Items.Count != 0)
+            throw new InvalidOperationException("切换账号后旧结果列表没有清空（旧记录 " + oldQuestions + " 条）。");
+        if (resultFilters["questions"].Search.Text.Length != 0) throw new InvalidOperationException("切换账号后旧搜索条件没有清空。");
+        if (questionTask.Length != 0) throw new InvalidOperationException("切换账号后旧章节范围没有清空。");
+        // The new account is usable: its own offline run produces its own rows.
+        await Call("loadDemo");
+        await WaitFor(() => !Busy && J.I(Summary, "courseCount") == 3, 30);
+        await Call("selectVisible", true);
+        await WaitFor(() => J.I(Summary, "selectedCount") == 3, 20);
+        await Call("startTasks");
+        await WaitFor(() => !Busy && resultLists["questions"].Items.Count > 0, 50);
+        smokeStep = "account switch reset complete";
+    }
+
+    // A real offline startTasks: the backend clears its models and emits the
+    // production questionsReset, which has to reset the retained result scope.
+    private async Task CheckOfflineStartScopeReset()
+    {
+        smokeStep = "offline start reset";
+        int revision = J.I(Summary, "questionRevision");
+        int oldQuestions = resultLists["questions"].Items.Count;
+        resultFilters["questions"].Search.Text = "合成筛选关键字";
+        await Task.Delay(150);
+        if (resultFilters["questions"].Search.Text.Length == 0) throw new InvalidOperationException("筛选框未接受输入。");
+        var stale = ShowRecord("tasks", rowCollections["tasks"][0].Data);
+        await WaitFor(() => currentDialog?.IsLoaded == true, 15);
+        await Call("startTasks");
+        await WaitFor(() => currentDialog == null, 25);
+        await stale;
+        await WaitFor(() => !Busy && resultLists["questions"].Items.Count > 0, 60);
+        if (J.I(Summary, "questionRevision") <= revision)
+            throw new InvalidOperationException("离线启动没有触发结果作用域复位。");
+        if (resultFilters["questions"].Search.Text.Length != 0) throw new InvalidOperationException("真实启动后旧筛选没有清空。");
+        if (questionTask.Length != 0) throw new InvalidOperationException("真实启动后旧章节范围没有清空。");
+        if (oldQuestions == 0) throw new InvalidOperationException("复位前没有旧结果可比对。");
+        smokeStep = "offline start reset complete";
     }
 
     private async Task CheckResumeEntry()

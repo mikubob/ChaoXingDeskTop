@@ -2,21 +2,21 @@
 
 面向 Windows 的超星课程学习工作台，用一个桌面窗口管理账号、课程、章节任务、题库与 AI 服务，以及逐题结果和日志。
 
-**当前版本：0.4.2** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
+**当前版本：0.5.0** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
 
-源码默认界面已迁移到原生 **WinUI 3（C# / Windows App SDK）**，保留五页侧栏、账号面板、课程列表、设置分组及任务／日志区布局。账号、配置、凭据保护和任务协议继续使用原 Python 后台；Qt Core 保留用于后台进程和模型，不创建 QML 界面。现有下载链接仍指向此前发布的 0.4.2 安装包，源码改动不会自动更新这些附件。
+源码默认界面为原生 **WinUI 3（C# / Windows App SDK）**，保留五页侧栏、账号面板、课程列表、设置分组及任务／日志区布局。账号、配置、凭据保护和任务协议继续使用原 Python 后台；Qt Core 保留用于后台进程和模型，不创建 QML 界面。旧 QML 界面仅作为归档参考实现保留，需显式使用 `--legacy-qml` 启动，不随发行版提供，也不参与安装包验收。本页下载链接对应 0.5.0 发行附件。
 
 开发运行：准备 Python 环境及 .NET 8 SDK，然后在 `desktop` 中运行 `./scripts/build-winui.ps1`、`.venv/Scripts/python.exe run.py`。详见 [WinUI 3 运行与构建](desktop/winui/README.md)。
 
-[下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.4.2/ChaoxingDesktop-0.4.2-Setup-win-x64.exe) · [发行说明](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.4.2) · [使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
+[下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.5.0/ChaoxingDesktop-0.5.0-Setup-win-x64.exe) · [发行说明](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.5.0) · [使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
 
 ## 下载与安装
 
 | 文件 | 用途 |
 | --- | --- |
-| [Windows x64 安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.4.2/ChaoxingDesktop-0.4.2-Setup-win-x64.exe) | 日常使用，已包含 Python 运行环境 |
-| [对应版本源码](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.4.2/ChaoxingDesktop-0.4.2-source.zip) | 查看实现、自行运行或构建 |
-| [SHA256 校验清单](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.4.2/ChaoxingDesktop-0.4.2-installer-SHA256.json) | 核对安装包及源码 ZIP 的完整性 |
+| [Windows x64 安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.5.0/ChaoxingDesktop-0.5.0-Setup-win-x64.exe) | 日常使用，已包含 Python 运行环境 |
+| [对应版本源码](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.5.0/ChaoxingDesktop-0.5.0-source.zip) | 查看实现、自行运行或构建 |
+| [SHA256 校验清单](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.5.0/ChaoxingDesktop-0.5.0-installer-SHA256.json) | 核对安装包及源码 ZIP 的完整性 |
 
 下载并运行安装包，按提示完成安装后，从桌面或开始菜单打开「超星桌面版」。首次使用可以直接选择「离线演示」，体验界面和任务流程。
 
@@ -51,6 +51,14 @@
 **0.3.8 新增讨论任务功能**：在「题库与 AI → 讨论任务」启用处理，选择精简、中等、详细或固定单字“好”；按需独立开启讨论自动提交。关闭提交时仅保存草稿，在「任务与日志 → 讨论记录」查看和复制。前三档复用 AI 服务；固定好不调用模型。新配置默认关闭讨论处理和提交。
 
 支持经章节 `insertbbs` 明确关联的新版超星讨论；非任务点、未知页面和无法核实本人回复时不自动发布。发布结果未知时保留记录，只读核验，不盲目重发。发布、任务点完成和成绩是三个不同结果。[讨论协议与边界](desktop/vendor/chaoxing/api/DISCUSSION_PROTOCOL.md)
+
+## 0.5.0 更新
+
+- 界面完成向原生 **WinUI 3（C# / Windows App SDK）** 的迁移收尾：五页侧栏、账号面板、课程列表、设置分组与任务／日志区均为原生控件；Python 后台、业务协议与 Qt Core 模型保持原样，仍通过继承的 stdin/stdout JSON 通道通信，不监听端口。
+- 新增任务停止后的「继续上次任务」（Issue #5）：停止并等后台退出后，可在「任务与日志」按原账号、课程和已识别任务点续跑，跳过已确认完成的章节；续跑始终使用完成缓存，不追加整课学习次数。开启自动提交等写入策略时，续跑会先要求确认。
+- 修复人工副本编辑器在编辑后立即关闭时可能丢失改动的问题：编辑发生即标记未保存，保存成功后才解除，关闭与放弃语义分开。
+- 覆盖升级时，安装器按清单清理旧 Qt Quick／QML 前端文件、0.4.2 随包源码 ZIP 和变空的目录，保留原安装配置与个人数据。
+- 移除过时的 QML 打包入口和迁移记录，保留 `--legacy-qml` 源码入口供现有回归使用。
 
 ## 0.4.2 更新
 

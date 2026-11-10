@@ -131,7 +131,15 @@ public sealed partial class MainWindow
         courseCount = Text("我的课程", 19);
         var search = new TextBox { PlaceholderText = "搜索课程名称或 ID", Width = 210 };
         AutomationProperties.SetName(search, "搜索课程");
+        courseSearch = search;
         search.TextChanged += async (_, _) => { if (!refreshing) await Call("searchCourses", search.Text); };
+        // The backend clears its course search when the account or run scope
+        // changes; the box must show that instead of a stale local query.
+        refreshers.Add(() =>
+        {
+            string query = J.S(Summary, "courseSearch");
+            if (search.Text != query) search.Text = query;
+        });
         var ids = new ToggleButtonCompat("显示 ID", value => { showIds = value; RefreshCourses(); });
         var toolbar = StretchRow(courseCount, Row(search, Button("全选可见", async () => await Call("selectVisible", true), true), Button("取消选择", async () => await Call("selectVisible", false), true), ids));
         courses = new ListView { SelectionMode = ListViewSelectionMode.None, ItemTemplate = (DataTemplate)Root.Resources["CourseTemplate"], HorizontalContentAlignment = HorizontalAlignment.Stretch };

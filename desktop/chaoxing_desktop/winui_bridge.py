@@ -91,7 +91,7 @@ class Bridge:
             for signal in (model.modelReset, model.rowsInserted, model.rowsRemoved, model.dataChanged):
                 signal.connect(lambda *_, n=name: self.mark(n))
         for name in ("pageRequested", "fieldRequested", "startConfirmationRequested", "coursesLoaded",
-                     "definitionPreviewRequested", "draftOpened"):
+                     "definitionPreviewRequested", "draftOpened", "questionsReset"):
             getattr(b, name).connect(lambda *args, n=name: send(dict(type="event", name=n, args=args)))
 
     def model(self, name):
@@ -112,11 +112,14 @@ class Bridge:
                 model = self.model(name)
                 state[name] = [model.data(model.index(i, 0), 257) for i in range(model.rowCount())]
             elif name == "summary":
-                state.update(summary=b.summary, accountRows=b.accountRows, serviceHealth=b.serviceHealth,
+                # The native page reads the diagnostics from the summary map, so mirror the
+                # warning and the AI usage counters there as well as keeping the flat keys.
+                summary = dict(b.summary, aiWarning=b.aiWarning, aiUsage=dict(b.aiUsage))
+                state.update(summary=summary, accountRows=b.accountRows, serviceHealth=b.serviceHealth,
                              strategySummary=b.strategySummary, capacityInfo=b.capacityInfo,
                              discussionPreview=b.discussionPreview, activityPreview=b.activityPreview,
                              runHistory=b.runHistory, historyError=b.historyError, uiFeedback=b.uiFeedback,
-                             aiWarning=b.aiWarning, draftEditable=b.draftEditable)
+                             aiWarning=b.aiWarning, aiUsage=summary["aiUsage"], draftEditable=b.draftEditable)
             elif name == "courses":
                 state["courses"] = b.courseRows
             elif name == "draft":

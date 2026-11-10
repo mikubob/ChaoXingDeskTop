@@ -1,4 +1,5 @@
 """Release trimming must preserve the retained plugins' native dependencies."""
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
@@ -6,7 +7,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from scripts.bundle_support import trim_bundle
-from scripts.build_installer import installer_copy_ignore, retired_runtime_files
+from scripts.build_installer import (installer_copy_ignore, retired_installer_lines,
+                                     retired_runtime_files)
 
 
 class BundlePolicyTests(unittest.TestCase):
@@ -25,11 +27,66 @@ class BundlePolicyTests(unittest.TestCase):
             binaries, _ = trim_bundle([self.entry(p) for p in paths], [], native_backend=True)
         self.assertEqual([e[0] for e in binaries], paths[1:])
 
-    def test_upgrade_retirement_list_only_targets_runtime_files(self):
+    def test_upgrade_retirement_list_only_targets_managed_files(self):
         files = retired_runtime_files()
         self.assertTrue(files)
         self.assertEqual(len(files), len(set(files)))
-        self.assertTrue(all(path.parts[0] == '_internal' for path in files))
+        self.assertEqual([path.as_posix() for path in files if path.parts[0] != '_internal'],
+                         ['Source/ChaoxingDesktop-0.4.2-source.zip'])
+
+    def test_retirement_lists_cover_the_archived_qml_payload(self):
+        """v0.4.2 shipped Qt Quick; the upgrade must name those files exactly."""
+        legacy = {path.as_posix() for path in retired_runtime_files()}
+        names = (Path(__file__).resolve().parents[1]
+                 / 'scripts' / 'retired-runtime-0.4.2.txt')
+        qml = {line.strip() for line in names.read_text(encoding='utf-8').splitlines()
+               if line.strip() and not line.startswith('#')}
+        self.assertIn('_internal/PySide6/Qt6Qml.dll', qml)
+        self.assertIn('_internal/PySide6/QtQuick.pyd', qml)
+        self.assertIn('_internal/chaoxing_desktop/qml/Main.qml', qml)
+        self.assertTrue(qml.issubset(legacy))
+        # Only the old bundled source archive may sit outside the runtime tree.
+        self.assertEqual({path for path in qml if not path.startswith('_internal/')},
+                         {'Source/ChaoxingDesktop-0.4.2-source.zip'})
+        self.assertFalse([path for path in qml if any(c in path for c in '*?')])
+        self.assertFalse([path for path in qml if path.endswith(
+            ('.ini', '.json', '.dat', '.log', '.key'))])
+
+    def test_retired_installer_lines_delete_only_named_absent_files(self):
+        with TemporaryDirectory() as directory:
+            stage = Path(directory)
+            (stage / '_internal/PySide6').mkdir(parents=True)
+            (stage / '_internal/PySide6/Qt6Core.dll').write_bytes(b'kept')
+            lines = retired_installer_lines(stage)
+            self.assertIn('Delete "$INSTDIR\\_internal\\PySide6\\Qt6Qml.dll"', lines)
+            self.assertIn('Delete "$INSTDIR\\Source\\ChaoxingDesktop-0.4.2-source.zip"', lines)
+            # A file this payload still ships is never deleted.
+            self.assertNotIn('Qt6Core.dll"', lines)
+            # Directories that still exist are not pruned.
+            self.assertNotIn('RMDir "$INSTDIR\\_internal\\PySide6"', lines)
+            self.assertIn('RMDir "$INSTDIR\\_internal\\chaoxing_desktop\\qml"', lines)
+            # Every obsolete ancestor is pruned, deepest first, so the old QML
+            # tree leaves no empty folders behind.
+            self.assertIn('RMDir "$INSTDIR\\_internal\\chaoxing_desktop"', lines)
+            self.assertIn('RMDir "$INSTDIR\\_internal\\PySide6\\qml"', lines)
+            rmdirs = [line for line in lines.splitlines() if line.startswith('RMDir ')]
+            depths = [line.count(chr(92)) for line in rmdirs]
+            self.assertEqual(depths, sorted(depths, reverse=True))
+            # No wildcards and no recursive delete flag.
+            self.assertNotIn('*', lines)
+            self.assertNotIn(' /r', lines)
+
+    def test_retirement_lists_match_their_evidence_fixture(self):
+        root = Path(__file__).resolve().parents[1]
+        evidence = json.loads((root / 'tests' / 'fixtures'
+                               / 'retired-runtime-0.4.2-evidence.json').read_text(encoding='utf-8'))
+        names = {line.strip() for line in
+                 (root / 'scripts' / 'retired-runtime-0.4.2.txt').read_text(encoding='utf-8').splitlines()
+                 if line.strip() and not line.startswith('#')}
+        self.assertEqual(len(names), evidence['selectedEntries'])
+        self.assertLessEqual(len(names), evidence['payloadEntries'])
+        self.assertEqual(evidence['sha256'],
+                         'f84097ab6dbd382f10616df63cf366d55305f5d67fe1970a5331a49b9336c61e')
 
     @staticmethod
     def entry(target):

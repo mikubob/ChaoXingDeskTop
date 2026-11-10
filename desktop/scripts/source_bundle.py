@@ -5,10 +5,15 @@ import zipfile
 
 def source_files(desktop: Path):
     root_files = (
-        ".gitignore", "run.py", "backend.py", "ChaoxingDesktop.spec", "WinUIBackend.spec", "README.md", "LICENSE",
-        "THIRD_PARTY_NOTICES.md", "UPGRADE_ACCEPTANCE.md", "REVIEWED_SUBMISSION_CONTRACT.md", "requirements.txt", "requirements-build.txt",
+        ".gitignore", "run.py", "backend.py", "WinUIBackend.spec", "README.md", "LICENSE",
+        "THIRD_PARTY_NOTICES.md", "REVIEWED_SUBMISSION_CONTRACT.md", "requirements.txt", "requirements-build.txt",
         "requirements-lock.txt",
         "scripts/retired-runtime-0.3.5.txt",
+        "scripts/retired-runtime-0.4.2.txt",
+        # Public compile input: ChaoxingDesktop.csproj uses it as ApplicationIcon
+        # and copies it next to the executable. Only this file is added; the
+        # assets filter stays SVG-only so no other binary is swept in.
+        "assets/app.ico",
     )
     files = [desktop / name for name in root_files]
     for path in (desktop / 'winui').rglob('*'):
@@ -31,6 +36,7 @@ def source_files(desktop: Path):
     files.append(desktop / "tests/fixtures/ocs_protocol_cases.json")
     files.append(desktop / "tests/fixtures/verification_cases.json")
     files.append(desktop / "tests/fixtures/README.md")
+    files.append(desktop / "tests/fixtures/retired-runtime-0.4.2-evidence.json")
     files.extend(desktop / relative for relative in (
         "vendor/chaoxing/LICENSE", "vendor/chaoxing/resource/README.md",
         "vendor/chaoxing/resource/font_map_table.json",

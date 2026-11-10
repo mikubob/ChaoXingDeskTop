@@ -51,6 +51,20 @@
      <ProgressBar Grid.Row="2" Grid.ColumnSpan="2" Value="{x:Bind Progress, Mode=OneWay}" Visibility="{x:Bind ProgressVisibility, Mode=OneWay}" Height="5"/>
     </Grid>
    </DataTemplate>
+   <DataTemplate x:Key="TaskTemplate" x:DataType="local:RecordRow">
+    <Grid Padding="10" RowSpacing="5" HorizontalAlignment="Stretch">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions>
+     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+     <TextBlock Text="{x:Bind Title, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+     <Button Grid.Column="1" Content="题目" Padding="10,2" FontSize="12" Margin="8,0" Click="TaskQuestionsClick" Tag="{x:Bind}" AutomationProperties.Name="查看该章节逐题结果" ToolTipService.ToolTip="按该章节筛选逐题结果"/>
+     <TextBlock Grid.Column="2" Text="{x:Bind Status, Mode=OneWay}" Foreground="{x:Bind StatusForeground, Mode=OneWay}" HorizontalAlignment="Right" FontSize="12" VerticalAlignment="Center"/>
+     <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Text="{x:Bind Subtitle, Mode=OneWay}" Foreground="{ThemeResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+     <ProgressBar Grid.Row="2" Grid.ColumnSpan="3" Value="{x:Bind Progress, Mode=OneWay}" Visibility="{x:Bind ProgressVisibility, Mode=OneWay}" Height="5"/>
+    </Grid>
+   </DataTemplate>
+   <DataTemplate x:Key="LogTemplate" x:DataType="local:LogEntry">
+    <TextBlock Text="{x:Bind Text}" Foreground="{x:Bind Brush}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="2,1"/>
+   </DataTemplate>
   </Grid.Resources>
   <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="216"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
   <Border Background="{ThemeResource SidebarBrush}" Padding="18">

@@ -7,6 +7,9 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(root))
+from scripts.check_smoke_report import verify_smoke_report
+
 target = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "dist/ChaoxingDesktop"
 destination = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root.parent / "plans/release-smoke"
 destination.mkdir(parents=True, exist_ok=True)
@@ -32,6 +35,8 @@ if "--worker-only" in sys.argv:
     raise SystemExit(0)
 # Use the same native Windows launch route as normal desktop use. The GUI
 # reports diagnostics through result.json, independently of console handles.
+# A report from an earlier build is never reused for this run.
+(destination / "result.json").unlink(missing_ok=True)
 command = [str(target / "ChaoxingDesktop.exe"), "--smoke-test", destination.as_posix()]
 if os.name == "nt":
     powershell = Path(env.get("WINDIR", "C:/Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -40,6 +45,5 @@ if os.name == "nt":
                "-Destination", str(destination)]
 result = subprocess.run(command, timeout=60, env=env)
 assert result.returncode == 0, f"Windowed launcher exited with {result.returncode}; see {destination / 'result.json'}"
-report = json.loads((destination / "result.json").read_text(encoding="utf-8"))
-assert report["success"], report
+report = verify_smoke_report(destination / "result.json")
 print(report["message"])

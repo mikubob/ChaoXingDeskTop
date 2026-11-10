@@ -1,20 +1,22 @@
 # 桌面版使用与开发指南
 
-**版本：0.4.2** · Windows 10 / 11 x64 · Python + PySide6 / QML · GPL-3.0
+**版本：0.5.0** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
 
-[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.4.2) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.5.0) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 本文中的命令默认在 `desktop` 目录的 PowerShell 中执行。
 
 ## 安装与升级
 
-安装包包含 Python 环境及运行依赖，默认安装到：
+安装包包含程序、Python 后台及运行依赖，默认安装到：
 
 ```text
 %LOCALAPPDATA%/Programs/ChaoxingDesktop/
 ```
 
 安装后可通过桌面或开始菜单快捷方式启动。升级前退出旧程序，再安装到原目录；安装器保留原 `installation.json`，沿用已有设置、账号、Cookie 和凭据。卸载保留个人数据。
+
+从 0.4.2 及更早的 QML 界面版本覆盖安装到 WinUI 3 版本时，安装器按 `scripts/retired-runtime-0.3.5.txt` 与 `scripts/retired-runtime-0.4.2.txt` 清理新版本已停用的旧前端文件及 0.4.2 安装包附带的源码 ZIP。清理限于清单逐项列出的安装文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
 
 如果使用完整程序目录，打开 `ChaoxingDesktop.exe` 即可。请保留 `_internal`、`ChaoxingWorker.exe` 及目录中的其他文件；后台组件由主程序启动。
 
@@ -54,7 +56,7 @@
 
 「暂停后续」阻止新的调度、答题请求和写入，在途请求及当前媒体可以继续。停止先协作取消，超时后终止后台；已经送达平台的请求不会撤回。
 
-在包含 #5 改动的 WinUI 源码构建中，点击停止并等后台退出后，可在「任务与日志」点击「继续上次任务」。当前应用会话会保留原账号、课程和已识别的任务点，跳过已确认完成的章节。续跑始终使用完成缓存，并跳过整课学习次数追加。提交结果未知时，请先到平台人工核验。现有 0.4.2 安装包尚未包含该入口。
+在包含 #5 改动的 WinUI 源码构建中，点击停止并等后台退出后，可在「任务与日志」点击「继续上次任务」。当前应用会话会保留原账号、课程和已识别的任务点，跳过已确认完成的章节。续跑始终使用完成缓存，并跳过整课学习次数追加。提交结果未知时，请先到平台人工核验。0.5.0 安装包已包含该入口。
 
 验证码使用本地 CPU OCR。识别不可用或验证类型不支持时，相关章节保留待处理；可在平台页面完成验证后重新登录或导入 Cookie。
 
@@ -78,6 +80,14 @@
 - **完整 INI 导出包含当前明文密码和密钥，应留在本机。** 保存失败或检测到其他进程修改时保留原文件，不覆盖更新状态。
 - 日志先脱敏再显示与写盘，单文件约 10 MiB、总量约 100 MiB、保留 14 天。删除仅处理本应用命名的普通日志。
 - 同一数据目录仅运行一个主窗口，重复启动会唤起已有窗口。界面日志、逐题结果及后台队列有容量限制。
+
+## 0.5.0 更新与清理
+
+- 界面迁移为 WinUI 3 原生窗口（Windows App SDK 1.8，自包含非 MSIX）。原生程序通过继承的 stdin/stdout 与 Python 后台交换 JSON，不监听端口、不开放网络入口；Qt Core 仍作为后台控制器使用。
+- 任务停止后可继续：点击「继续上次任务」沿用当前应用会话的账号、课程与已识别任务点，跳过已确认完成的章节；续跑使用完成缓存并跳过整课学习次数追加。
+- 人工副本编辑、问卷文本与选项改动在输入立即标记为未保存；保存成功前关闭弹框会拦截，并明确区分「保存」与「放弃本次修改」，避免 RPC 状态同步窗口内丢失改动。
+- 移除过时的 QML 打包入口与迁移记录。保留 `--legacy-qml` 源码入口和现有回归测试，发行安装包使用 WinUI 3。
+- 未新增运行依赖，锁文件与 vendor 协议源码不变；安装包体积、数据目录结构与个人数据保留规则沿用 0.4.2。
 
 ## 0.4.1 填空与只读核验修复
 
@@ -116,10 +126,6 @@
 - 人工副本在 `draft_copies/` 按账号保存，最多 20 项／2 MiB，含题目和正文、未加密。满容量不自动淘汰；可先导出，再经确认删除独立副本，删除不影响原始草稿或防重记录。当前没有副本提交入口，第二期前置合同见 [REVIEWED_SUBMISSION_CONTRACT.md](REVIEWED_SUBMISSION_CONTRACT.md)。
 - 「任务与日志 → 容量」查看各显示保留／淘汰、日志积压／峰值／失败批次和导出范围。左下「版本与校验」查看运行方式和 profile、主动打开发行网页或复制不含账号／路径的版本校验说明；不自动下载、执行或宣称版本最新，也不代替实际安装包哈希核对。
 - 关闭重做／追加次数时从属参数禁用且保留；保存数值、枚举或模板错误时跳转并聚焦对应文本、多行、开关或选择控件。必要灰色文字提高对比度。最小逻辑窗口仍为 980×700，高 DPI 实机与跨屏验收仍待进行。
-
-实施验收与已知限制见 [UPGRADE_ACCEPTANCE.md](UPGRADE_ACCEPTANCE.md)。
-
-0.4.0 清理后已通过 413 项单元、7 组界面回归、四档软件缩放、冻结 worker／GUI，以及隔离目录中的全新安装、0.3.9 覆盖升级和卸载数据保留验收。安装测试禁用注册与快捷方式；并非干净虚拟机或 Windows 高 DPI 实机验收。源码与安装包由现有 provenance 门槛绑定。
 
 ## 源码运行
 
@@ -171,44 +177,36 @@ python -m venv .venv-build
 ### 构建程序
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.4.2/ChaoxingDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.5.0/ChaoxingDesktop
 ```
 
 构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后运行单元回归、发布自包含 WinUI 3 界面、使用 PyInstaller 打包 Python 后台，最后验收冻结 worker 与原生界面。开发机还需要 .NET 8 SDK。
 
-程序输出至 `dist/release-0.4.2/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
+程序输出至 `dist/release-0.5.0/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
 
-一键构建程序并生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）：
+先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与单元、worker、GUI 三项验收标记，因此必须先完成带 GUI 验收的构建：
 
 ```powershell
-.\scripts\build-installer.ps1
+.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.5.0/ChaoxingDesktop --compiler "desktop/build/installer-tools/nsis-3.13/nsis-3.13/makensis.exe"
 ```
 
-脚本自动查找 PATH、`desktop/build/nsis-tools/nsis-3.11/`、Program Files 和 `C:/Tools/NSIS/` 中的 `makensis.exe`，也可通过 `-Compiler "D:/Tools/NSIS/makensis.exe"` 指定。默认程序目录为 `desktop/dist/ChaoxingDesktop/`，安装包输出至项目根目录的 `release/`。可使用 `-AppDirectory`、`-OutputDirectory` 修改目录；相对路径均以 `desktop` 为基准。`-Wheelhouse` 可传入本地依赖目录。
-
-已有完成验收且源码未变化的程序时，可使用 `-SkipBuild -AppDirectory dist/release-0.4.2/ChaoxingDesktop` 仅生成安装包；仍会校验构建记录、源码哈希与验收标记。
-
-也可分步调用底层打包工具：
-
-准备 [NSIS 编译器](https://nsis.sourceforge.io/Download)，将下方路径替换为本机的 `makensis.exe`：
-
-```powershell
-.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.4.2/ChaoxingDesktop --compiler "C:/Tools/NSIS/makensis.exe"
-```
+`--compiler` 指向本机的 `makensis.exe`（[NSIS 下载](https://nsis.sourceforge.io/Download)），相对路径以 `desktop` 为基准；`--app` 默认不推断，必须显式给出已验收的程序目录，`--output` 默认写入项目根目录的 `release/`。仓库内 `desktop/build/` 下的 NSIS 与 .NET SDK 属本机工具，不进入源码包，也不随安装包分发。
 
 产物默认写入项目根目录的 `release/`：
 
 ```text
-ChaoxingDesktop-0.4.2-Setup-win-x64.exe
-ChaoxingDesktop-0.4.2-source.zip
-ChaoxingDesktop-0.4.2-installer-SHA256.json
+ChaoxingDesktop-0.5.0-Setup-win-x64.exe
+ChaoxingDesktop-0.5.0-source.zip
+ChaoxingDesktop-0.5.0-installer-SHA256.json
 ```
 
 安装包包含完整程序、对应源码 ZIP、许可和第三方声明，NSIS 编译器不随包分发。生成安装包前会核对程序版本、源码与产物哈希，以及单元、worker、GUI 验收标记；跳过 GUI 的构建不能用于正式发布。修改构建输入后，需要重新构建和验收。
 
-安装器与便携打包共用 `scripts/source_bundle.py` 的公共文件清单，仅额外收录工作台验收记录和副本提交边界合同，不收集历史计划、截图、用户数据或临时文件。升级时只删除 `scripts/retired-runtime-0.3.5.txt` 列出的具体废弃运行文件，不使用通配符或递归删除，也不删除新程序仍包含的文件。
+安装器与便携打包共用 `scripts/source_bundle.py` 的公共文件清单：只按点名清单收录构建与运行必需的公开资源（含 `assets/app.ico` 这一原生编译输入），不收集历史计划、截图、用户数据或临时文件。升级时只删除 `scripts/retired-runtime-0.3.5.txt` 与 `scripts/retired-runtime-0.4.2.txt` 列出的具体废弃运行文件，不使用通配符或递归删除，也不删除新程序仍包含的文件。
+
+隔离目录中的安装验收可用 `tests/installer_smoke.ps1`：`-PreviousInstaller` 传入任一旧安装包即可验证通用覆盖升级；只有当该安装包是已记录的 0.4.2 QML 载荷（按安装包 SHA-256 或 profile 识别）或显式加 `-ExpectRetiredPayload` 时，才会额外断言退役清单中的旧前端文件已被清理。
 
 ## 0.3.9 更新与清理
 

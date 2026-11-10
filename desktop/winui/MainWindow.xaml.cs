@@ -30,7 +30,7 @@ public sealed partial class MainWindow : Window
     private ComboBox? accounts;
     private TextBlock? selectedText, courseCount, emptyCourses;
     private ListView? courses;
-    private TextBox? logText;
+    private TextBox? courseSearch;
     private bool refreshing, closing, closePending, showIds;
     private ContentDialog? currentDialog, manualDialog;
     private string inputSignature = "";
@@ -81,8 +81,13 @@ public sealed partial class MainWindow : Window
         Grid.SetColumn(HeaderActions, 1);
     }
 
+    // Smoke-only observation seam: records which RPC the product's own dialog
+    // handlers issued, without changing what is sent or how the backend reacts.
+    private readonly List<string> smokeCalls = new();
     private async Task<JsonNode?> Call(string method, params object?[] args)
     {
+        if (smokeDestination != null && method is "reply" or "confirmStartTasks" or "cancelStartTasks")
+            smokeCalls.Add(method + " " + string.Join("|", args.Select(a => a?.ToString() ?? "")));
         try { return await backend.Call(method, args); }
         catch (Exception e) { Error(e.Message); return null; }
     }
@@ -178,7 +183,7 @@ public sealed partial class MainWindow : Window
             if (update.ContainsKey("courses")) RefreshCourses();
             foreach (var pair in resultLists)
                 if (update.ContainsKey(pair.Key)) RefreshRecords(pair.Key, pair.Value);
-            if (update.ContainsKey("logs") && logText != null) logText.Text = string.Join(Environment.NewLine, J.A(backend.State["logs"]).Select(n => n.ToString()));
+            if (update.ContainsKey("logs")) SyncLogs();
             if (update.ContainsKey("input")) RefreshInput();
             RefreshCourseNavigation();
         }

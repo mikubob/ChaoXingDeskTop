@@ -111,7 +111,7 @@ class WinUIBridgeTests(unittest.TestCase):
         self.process.stdin.write((json.dumps(dict(id=self.sequence, method='releaseAction', args=['copy'])) + '\n').encode())
         self.process.stdin.flush()
         message = self.wait(lambda m: m['type'] == 'clipboard')
-        self.assertIn('0.4.2', message['text'])
+        self.assertIn('0.5.0', message['text'])
 
     def test_demo_course_search_selection_and_worker(self):
         self.assertFalse(self.state['summary']['coursesReady'])
@@ -274,6 +274,58 @@ class BridgeStateNotificationTests(unittest.TestCase):
             b.confirmStartTasks()
         start.assert_called_once()
         self.assertEqual(start.call_args.args[0]['resume']['tasks'][0]['pointId'], 'p1')
+
+    def test_questions_reset_and_ai_usage_reach_the_native_transport(self):
+        """Scope switches must reach the native filters, and AI usage must be sent."""
+        b = self.b
+        self.bridge.mark('summary')
+        self.bridge.flush()
+        self.assertEqual(set(self.state['summary']['aiUsage']),
+                         {'requests', 'limit', 'known', 'unknown', 'tokens'})
+        b.ai_usage.update(requests=3, limit=5, known=1, unknown=1, tokens=42)
+        self.bridge.mark('summary')
+        self.bridge.flush()
+        self.assertEqual(self.state['summary']['aiUsage'],
+                         dict(requests=3, limit=5, known=1, unknown=1, tokens=42))
+
+        self.messages.clear()
+        b.filterQuestions(True, 'task-1')
+        self.bridge.flush()
+        self.assertFalse(any(m['type'] == 'event' and m['name'] == 'questionsReset' for m in self.messages),
+                         'plain filtering must not reset the native controls')
+
+        b.reset_question_filters()
+        self.bridge.flush()
+        resets = [m for m in self.messages if m['type'] == 'event' and m['name'] == 'questionsReset']
+        self.assertEqual(len(resets), 1)
+        self.assertEqual(list(resets[0]['args']), [])
+        # The reset stays an event, never an unsupported RPC method.
+        from chaoxing_desktop.winui_bridge import COMMANDS
+        self.assertNotIn('reset_question_filters', COMMANDS)
+
+    def test_cleared_filters_after_reset_are_accepted_not_stale(self):
+        """Re-applying the cleared filters after a reset must be a valid, empty filter."""
+        b = self.b
+        b.filterQuestions(True, 'task-1')
+        b.filterDiscussions('query', 'draft')
+        b.filterActivities('query', 'draft')
+        b.filterAttention('query', 'manual')
+        b.reset_question_filters()
+        self.bridge.flush()
+        self.assertTrue(any(m['type'] == 'event' and m['name'] == 'questionsReset'
+                            for m in self.messages))
+        for method, args in (('filterQuestions', [False, '']),
+                             ('filterDiscussions', ['', '']),
+                             ('filterActivities', ['', '']),
+                             ('filterAttention', ['', ''])):
+            with self.subTest(method=method):
+                self.messages.clear()
+                self.bridge.dispatch({'id': 900, 'method': method, 'args': args, 'path': ''})
+                responses = [m for m in self.messages if m['type'] == 'response']
+                self.assertTrue(responses)
+                self.assertNotIn('error', responses[-1])
+        self.assertEqual(self.state['summary']['questionCount'], 0)
+
 
     def test_bank_edits_expire_health_without_resending_providers(self):
         for key, value in (('go_endpoint', 'https://example.invalid/bank'),

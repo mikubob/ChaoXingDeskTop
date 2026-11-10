@@ -8,6 +8,10 @@ namespace ChaoxingDesktop;
 
 public sealed partial class MainWindow
 {
+    // Smoke-only: the automated run normally auto-answers completion prompts so
+    // a headless run never blocks. While this flag is set the product shows the
+    // real dialog instead, so the native buttons can be exercised.
+    private bool smokeInterceptInput;
     private void HandleEvent(string name, JsonArray args)
     {
         if (name == "coursesLoaded") coursesLoadedPending = true;
@@ -42,6 +46,10 @@ public sealed partial class MainWindow
             else { await ShowText("定义被拒绝（未导入）", args[0]?.ToString() ?? ""); await Call("finishDefinitionImport", false); }
         });
         else if (name == "draftOpened" && args[0] is JsonNode copy) EnqueueDialog(() => ShowDraft(copy));
+        // The backend resets its question filter whenever the account or the
+        // run scope changes; the retained result controls must follow it or
+        // they would keep filtering (and sending stale RPCs) on their own.
+        else if (name == "questionsReset") ResetResultFilters();
     }
 
     private void RefreshInput()
@@ -51,7 +59,7 @@ public sealed partial class MainWindow
         if (signature == inputSignature) return;
         inputSignature = signature;
         if (input is not JsonObject obj || obj.Count == 0) { manualDialog?.Hide(); return; }
-        if (smokeDestination != null) { _ = Call("reply", "", false); return; }
+        if (smokeDestination != null && !smokeInterceptInput) { _ = Call("reply", "", false); return; }
         manualDialog?.Hide();
         var clone = input.DeepClone();
         EnqueueDialog(() => ShowInput(clone, signature));
@@ -120,10 +128,14 @@ public sealed partial class MainWindow
         var feedback = new InfoBar { IsOpen = true, IsClosable = false, Message = J.S(backend.State, "draftFeedback") };
         var panel = Column(Text("独立的本机人工副本。保存后可复制或导出。", 12, true), Text(J.S(copy["source"], "title"), 17));
         var editorControls = new List<Control>();
+        // Track edits before the bridge responds, including edits made while a save is in flight.
+        int edits = 0, savedEdits = 0;
+        bool HasUnsavedEdits() => edits != savedEdits || J.B(backend.State, "draftDirty");
         if (J.S(copy, "kind") == "discussion")
         {
             var editor = new TextBox { Text = J.S(copy, "content"), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 270 };
-            editor.TextChanged += async (_, _) => await Call("setDraftContent", editor.Text); panel.Children.Add(editor); editorControls.Add(editor);
+            editor.TextChanged += async (_, _) => { edits++; await Call("setDraftContent", editor.Text); };
+            panel.Children.Add(editor); editorControls.Add(editor);
         }
         else
         {
@@ -134,7 +146,8 @@ public sealed partial class MainWindow
                 if (J.S(question, "type") == "text")
                 {
                     var text = new TextBox { Text = J.S(initial, "text"), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
-                    text.TextChanged += async (_, _) => await Call("setDraftAnswer", id, new { text = text.Text }); panel.Children.Add(text); editorControls.Add(text);
+                    text.TextChanged += async (_, _) => { edits++; await Call("setDraftAnswer", id, new { text = text.Text }); };
+                    panel.Children.Add(text); editorControls.Add(text);
                 }
                 else
                 {
@@ -148,7 +161,8 @@ public sealed partial class MainWindow
                         {
                             if (changing) return; changing = true;
                             if (J.S(question, "type") == "single" && check.IsChecked == true) foreach (var pair in boxes) if (pair.Box != check) pair.Box.IsChecked = false;
-                            changing = false; await Call("setDraftAnswer", id, new { option_ids = boxes.Where(p => p.Box.IsChecked == true).Select(p => p.Id).ToArray() });
+                            changing = false; edits++;
+                            await Call("setDraftAnswer", id, new { option_ids = boxes.Where(p => p.Box.IsChecked == true).Select(p => p.Id).ToArray() });
                         };
                     }
                 }
@@ -163,22 +177,23 @@ public sealed partial class MainWindow
         {
             args.Cancel = true;
             var deferral = args.GetDeferral();
+            var savingEdits = edits;
             try
             {
-                await SaveDraftFromEditor(feedback);
+                if (await SaveDraftFromEditor(feedback)) savedEdits = Math.Max(savedEdits, savingEdits);
             }
             finally { deferral.Complete(); }
         };
         bool discard = false;
         dialog.CloseButtonClick += (_, args) =>
         {
-            if (J.B(backend.State, "draftDirty") && !discard)
+            if (HasUnsavedEdits() && !discard)
             {
                 args.Cancel = true; feedback.Message = "尚有未保存修改。请先保存，或点击下方「放弃本次修改」。";
                 if (!panel.Children.OfType<Button>().Any()) panel.Children.Add(Button("放弃本次修改", () => { discard = true; dialog.Hide(); return Task.CompletedTask; }));
             }
         };
-        dialog.Closing += (_, args) => { if (J.B(backend.State, "draftDirty") && !discard) { args.Cancel = true; feedback.Message = "尚有未保存修改。请先保存，或点击「关闭」选择放弃修改。"; } };
+        dialog.Closing += (_, args) => { if (HasUnsavedEdits() && !discard) { args.Cancel = true; feedback.Message = "尚有未保存修改。请先保存，或点击「关闭」选择放弃修改。"; } };
         try { await ShowModal(dialog); } finally { refreshers.Remove(update); }
     }
 
@@ -195,7 +210,7 @@ public sealed partial class MainWindow
         };
     }
 
-    private async Task SaveDraftFromEditor(InfoBar feedback)
+    private async Task<bool> SaveDraftFromEditor(InfoBar feedback)
     {
         bool saved = (await Call("saveDraftCopy"))?.ToString() == "true";
         UpdateDraftFeedback(feedback);
@@ -204,5 +219,6 @@ public sealed partial class MainWindow
             feedback.Message = J.S(Summary, "message", "保存失败，请检查磁盘空间与副本版本后重试。");
             feedback.Severity = InfoBarSeverity.Error;
         }
+        return saved;
     }
 }
