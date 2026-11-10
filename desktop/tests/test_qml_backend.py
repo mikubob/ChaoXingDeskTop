@@ -246,7 +246,9 @@ class QmlBackendTests(unittest.TestCase):
         b = self.b
         b.demo_mode = True
         b.operation = 'run'
-        b._begin('run', True, [['demo-101', '01']])
+        with patch.object(b.controller, 'start') as start:
+            b._begin('run', True, [['demo-101', '01']])
+        start.assert_called_once()
         b.on_event(dict(type='tasks', tasks=[dict(id='demo-101:0', course='Demo', title='t',
                                                   courseId='demo-101', clazzId='01', pointId='0')]))
         b.controller.active = True
