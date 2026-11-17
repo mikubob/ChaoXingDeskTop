@@ -111,7 +111,7 @@ class WinUIBridgeTests(unittest.TestCase):
         self.process.stdin.write((json.dumps(dict(id=self.sequence, method='releaseAction', args=['copy'])) + '\n').encode())
         self.process.stdin.flush()
         message = self.wait(lambda m: m['type'] == 'clipboard')
-        self.assertIn('0.5.0', message['text'])
+        self.assertIn('0.6.0', message['text'])
 
     def test_demo_course_search_selection_and_worker(self):
         self.assertFalse(self.state['summary']['coursesReady'])
@@ -141,26 +141,64 @@ class WinUIBridgeTests(unittest.TestCase):
         self.assertFalse(self.state['summary']['coursesReady'])
 
     def test_validation_prevents_close_and_preserves_input(self):
+        self.assertTrue(self.call('save')['result'])
+        path = Path(self.directory.name) / 'settings.ini'
+        previous = path.read_bytes()
         self.call('setValue', 'common', 'speed', 'invalid')
-        self.assertFalse(self.call('close')['result'])
+        self.assertEqual(self.call('close')['result'], 'confirm')
+        self.assertFalse(self.call('saveAndClose')['result'])
         self.assertIsNone(self.process.poll())
+        self.assertTrue(self.state['summary']['settingsDirty'])
+        self.assertEqual(self.state['values']['common']['speed'], 'invalid')
+        self.assertEqual(path.read_bytes(), previous)
         self.call('setValue', 'common', 'speed', '1.5')
         self.assertTrue(self.call('save')['result'])
 
     def test_close_saves_and_acknowledges_while_worker_is_active(self):
+        self.call('setValue', 'desktop', 'auto_save', 'false')
         self.call('loadDemo')
         self.wait(lambda _: self.state['summary']['coursesReady'] and not self.state['summary']['busy'])
+        self.call('setValue', 'common', 'speed', '1.5')
         self.call('selectVisible', True)
         self.call('startTasks')
         self.assertTrue(self.state['summary']['busy'])
         started = time.monotonic()
-        self.assertTrue(self.call('close')['result'])
+        self.assertEqual(self.call('close')['result'], 'confirm')
+        self.assertTrue(self.call('saveAndClose')['result'])
         self.assertLess(time.monotonic() - started, 1.0)
-        self.assertTrue((Path(self.directory.name) / 'settings.ini').is_file())
+        self.assertIn('speed = 1.5', (Path(self.directory.name) / 'settings.ini').read_text(encoding='utf-8'))
         # Cleanup still runs to completion after acknowledging the native UI.
         self.process.stdin.close()
         self.process.wait(timeout=8)
         self.assertEqual(self.process.returncode, 0)
+
+    def test_autosave_debounces_and_cancel_close_resumes_it(self):
+        path = Path(self.directory.name) / 'settings.ini'
+        self.assertTrue(self.call('save')['result'])
+        previous = path.read_bytes()
+        self.call('setValue', 'common', 'speed', '1.25')
+        self.call('setValue', 'common', 'speed', '1.5')
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertEqual(self.call('close')['result'], 'confirm')
+        time.sleep(.9)
+        self.assertEqual(path.read_bytes(), previous)
+        self.call('cancelClose')
+        self.wait(lambda _: not self.state['summary']['settingsDirty'])
+        self.assertIn('speed = 1.5', path.read_text(encoding='utf-8'))
+        self.call('setValue', 'common', 'speed', '1.25')
+        self.call('setValue', 'common', 'speed', '1.5')
+        self.assertFalse(self.state['summary']['settingsDirty'])
+        self.assertTrue(self.call('close')['result'])
+
+    def test_autosave_conflict_and_discard_preserve_external_file(self):
+        path = Path(self.directory.name) / 'settings.ini'
+        path.write_bytes(b'; external change\n')
+        self.call('setValue', 'common', 'speed', '1.5')
+        self.wait(lambda _: '自动保存失败' in self.state['summary']['saveState'])
+        self.assertTrue(self.state['summary']['settingsDirty'])
+        self.assertEqual(self.call('close')['result'], 'confirm')
+        self.assertTrue(self.call('discardAndClose')['result'])
+        self.assertEqual(path.read_bytes(), b'; external change\n')
 
 
 class BridgeStateNotificationTests(unittest.TestCase):
@@ -196,6 +234,70 @@ class BridgeStateNotificationTests(unittest.TestCase):
         self.b.deleteLater()
         self.bridge.guard.deleteLater()
         self.app.processEvents()
+
+    def test_startup_restores_only_the_active_saved_session(self):
+        from chaoxing_desktop.accounts import write_cookie
+        from chaoxing_desktop.winui_bridge import Bridge
+
+        b = self.b
+        store = b.account_store
+        other = store.add('synthetic-other')
+        row = store.add('synthetic-active')
+        for account in (other, row):
+            write_cookie(store.cookie_path(account['id']), {'_uid': 'test-uid', 'session': 'synthetic'})
+        b.config['common'].update(username=row['username'], password='session-only', use_cookies='false')
+        with patch.object(b.controller, 'start') as start, patch.object(b._course_controller, 'start'):
+            b.restore_saved_session()
+            start.assert_not_called()
+            b.setValue('desktop', 'auto_login', 'true')
+            self.assertTrue(b.save())
+            self.assertTrue(self.bridge.start())
+            start.assert_not_called()
+            second_messages = []
+            second = Bridge(self.app, second_messages.append)
+            try:
+                self.assertEqual(second.backend.config['desktop']['auto_login'], 'true')
+                with patch.object(second.backend.controller, 'start') as second_start:
+                    self.assertFalse(second.start())
+                    self.app.processEvents()
+                    second_start.assert_not_called()
+                self.assertEqual(second_messages[0]['type'], 'alreadyRunning')
+            finally:
+                second.dispose()
+            self.app.processEvents()
+            self.app.processEvents()
+            start.assert_called_once()
+            command = start.call_args.args[0]
+            self.assertEqual(command['action'], 'courses')
+            self.assertEqual(command['account_id'], row['id'])
+            self.assertEqual(command['config']['common']['username'], row['username'])
+            self.assertTrue(command['config']['common']['use_cookies'])
+            self.assertEqual(command['config']['common']['password'], '')
+            self.assertEqual(command['config']['question_bank']['providers'], '')
+            self.assertFalse(command['demo'])
+            b.on_event(dict(type='courses', account_id=row['id'], courses=[dict(courseId='1', clazzId='a', title='Synthetic')]))
+            self.assertTrue(any(m.get('name') == 'coursesLoaded' for m in self.messages))
+
+    def test_startup_cookie_failure_keeps_manual_login_and_saved_session(self):
+        b = self.b
+        b.config['desktop']['auto_login'] = 'true'
+        with patch.object(b.controller, 'start') as start:
+            b.restore_saved_session()
+            start.assert_not_called()
+            row = b.account_store.add('synthetic')
+            b.restore_saved_session()
+            start.assert_not_called()
+            self.assertIn('重新登录', b.summary['message'])
+            cookie = b.account_store.cookie_path(row['id'])
+            cookie.parent.mkdir(parents=True, exist_ok=True)
+            cookie.write_bytes(b'fixture')
+            b.restore_saved_session()
+            start.assert_called_once()
+            b.on_event(dict(type='error', message='Cookie 已失效'))
+            b.on_finished(1)
+            self.assertIn('重新登录', b.summary['message'])
+            self.assertFalse(b.summary['coursesReady'])
+            self.assertEqual(cookie.read_bytes(), b'fixture')
 
     def test_saved_draft_unlocks_on_worker_completion_and_locks_on_source_change(self):
         from chaoxing_desktop.discussion_model import safe_record

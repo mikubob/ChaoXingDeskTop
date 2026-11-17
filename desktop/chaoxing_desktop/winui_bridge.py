@@ -21,7 +21,7 @@ from .release_info import RELEASE_URLS, verification_info
 
 # Deliberately exclude event handlers and internal methods from RPC.
 COMMANDS = frozenset("""
-setValue save close discardAndClose loadDemo fetchCourses startTasks resumeTasks
+setValue save close saveAndClose discardAndClose cancelClose loadDemo fetchCourses startTasks resumeTasks
 confirmStartTasks cancelStartTasks pause stop browserLogin cancelBrowserLogin
 addAccount switchAccount renameAccount removeAccount searchCourses selectCourse
 selectVisible toggleProvider moveProvider checkAi checkBank offlineCheck
@@ -34,6 +34,7 @@ openDraftCopy openSavedDraft setDraftContent setDraftAnswer saveDraftCopy
 exportDraftCopy deleteSavedDraft draftAnswer clearUiFeedback releaseAction
 """.split())
 MAX_COMMAND_BYTES = 1024 * 1024
+CLOSE_COMMANDS = frozenset(('close', 'saveAndClose', 'discardAndClose', 'cancelClose'))
 
 
 class PathDialogs:
@@ -144,6 +145,26 @@ class Bridge:
         self.dirty.update(("summary", "values", "courses", "providers", "input", "draft",
                            "tasks", "questions", "discussions", "activities", "attention", "logs"))
         self.flush()
+        QTimer.singleShot(0, self.backend.restore_saved_session)
+        return True
+
+    def close_request(self, method):
+        b = self.backend
+        if method == 'cancelClose':
+            if b.settings_close_pending:
+                b.settings_close_pending = False
+                b.schedule_settings_save()
+            return None
+        if method == 'close' and b.settings_dirty:
+            b.settings_close_pending = True
+            b.schedule_settings_save()
+            return 'confirm'
+        if method == 'saveAndClose':
+            if not b.settings_close_pending:
+                raise ValueError('请先请求退出。')
+            if b.settings_dirty and not b._save_settings(exiting=True):
+                b.settings_close_pending = False
+                return False
         return True
 
     def dispatch(self, request):
@@ -158,12 +179,12 @@ class Bridge:
             if not isinstance(path, str) or len(path) > 32768:
                 raise ValueError("文件路径无效")
             self.backend.file_dialogs.path = path
-            if request['method'] in ('close', 'discardAndClose'):
+            if request['method'] in CLOSE_COMMANDS:
                 # Acknowledge a successful save before waiting for workers.
                 # WinUI hides the window, then awaits this process's cleanup.
                 if args:
                     raise ValueError("命令参数无效")
-                result = self.backend._prepare_close(request['method'] == 'discardAndClose')
+                result = self.close_request(request['method'])
             else:
                 result = getattr(self.backend, request["method"])(*args)
             if request['method'] == 'loadRunHistory':
@@ -173,8 +194,9 @@ class Bridge:
             self.mark("summary")
             self.flush()
             self.send(dict(type="response", id=request_id, result=result))
-            if request["method"] in ("close", "discardAndClose") and result:
+            if request["method"] in CLOSE_COMMANDS and result is True:
                 self.app.quit()
+                return True
         except Exception as exc:
             # Do not echo commands, arguments, paths or tracebacks with secrets.
             self.send(dict(type="response", id=request_id, error=self.backend.redact(str(exc))))
@@ -235,7 +257,8 @@ def main():
             if request is None:
                 app.quit()
                 return
-            bridge.dispatch(request)
+            if bridge.dispatch(request):
+                return
 
     poll.timeout.connect(drain)
     poll.start()

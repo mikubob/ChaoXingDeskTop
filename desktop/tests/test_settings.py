@@ -143,7 +143,11 @@ class SettingsTests(unittest.TestCase):
         self.configure(backend)
         self.assertTrue(backend.save())
         original = self.path.read_bytes()
+        backend.setValue("ai", "key", "replacement-key")
         with patch("chaoxing_desktop.credentials.protect", side_effect=OSError("failure")):
+            backend._settings_timer.timeout.emit()
+            self.assertTrue(backend.summary["settingsDirty"])
+            self.assertIn("自动保存失败", backend.summary["saveState"])
             self.assertFalse(backend.close())
         self.assertEqual(self.path.read_bytes(), original)
         self.assertIn("加密失败", backend.message)

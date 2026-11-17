@@ -119,8 +119,20 @@ public sealed partial class MainWindow
             dialog.SecondaryButtonClick += async (_, _) => await Call("reply", "", false);
         }
         dialog.CloseButtonClick += async (_, _) => await Call("reply", "", true);
-        dialog.Closing += (_, args) => { if (inputSignature == signature && backend.State["input"] is JsonObject active && active.Count > 0) args.Cancel = true; };
-        await ShowModal(dialog, manual: true, stillWanted: () => inputSignature == signature && backend.State["input"] is JsonObject active && active.Count > 0);
+        bool StillWanted() => inputSignature == signature && backend.State["input"] is JsonObject active && active.Count > 0;
+        bool suspended = false;
+        dialog.Closing += (_, args) =>
+        {
+            if (!StillWanted() || closing) return;
+            suspended = closePending != null;
+            args.Cancel = !suspended;
+        };
+        do
+        {
+            if (closePending is { } decision) await decision.Task;
+            suspended = false;
+            await ShowModal(dialog, manual: true, stillWanted: StillWanted);
+        } while ((suspended || closePending != null) && !closing && StillWanted());
     }
 
     private async Task ShowDraft(JsonNode copy)

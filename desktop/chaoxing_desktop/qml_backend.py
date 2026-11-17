@@ -13,7 +13,7 @@ from .answers import option_pairs, plain_text, question_images
 from .config import BANKS, Redactor, course_key, data_dir, defaults, is_secret, parse_text, serialize, to_payload, validate
 from .controller import Controller
 from .qml_schema import SCHEMA
-from .settings import restore_credentials, serialize_settings
+from .settings import restore_credentials, serialize_settings, settings_snapshot
 from .models import LogModel, LogFilter, TaskModel, STATUS, TERMINAL
 from .log_store import LogStore, AsyncLogStore
 from .question_model import QuestionModel, QuestionFilter
@@ -106,6 +106,13 @@ class Backend(QObject):
             self.account_store = None
             self.account_error = "账号读取失败，原文件已保留：" + self.redact(exc)
             self.message, self.tone = self.account_error, 'danger'
+        self._saved_settings = settings_snapshot(self.config)
+        self.settings_dirty = False
+        self.settings_close_pending = False
+        self._settings_timer = QTimer(self)
+        self._settings_timer.setSingleShot(True)
+        self._settings_timer.setInterval(750)
+        self._settings_timer.timeout.connect(lambda: self._save_settings(automatic=True))
         self.selected = set()
         self.search = ""
         self.demo_mode = False
@@ -173,6 +180,7 @@ class Backend(QObject):
         self._progress_timer.setInterval(100)
         self._progress_timer.timeout.connect(self.changed.emit)
         self.operation = None
+        self._restoring_session = False
         self.outcome = False
         self.mode = "本地工作台"
         self.ai_status = "尚未测试连接"
@@ -418,7 +426,7 @@ class Backend(QObject):
                     resume=dict(self.resumeState),
                     total=total, success=counts["success"], pending=counts["pending"] + counts["processed"],
                     failed=counts["failed"], progress=round(100 * sum(counts[s] for s in TERMINAL) / total) if total else 0,
-                    saveState=self.save_state, aiStatus=self.ai_status,
+                    saveState=self.save_state, settingsDirty=self.settings_dirty, aiStatus=self.ai_status,
                     cookie=self._cookie_exists,
                     activeAccount=self.account_store.active if self.account_store else '',
                     accountCount=len(self.account_store.rows) if self.account_store else 0,
@@ -455,9 +463,8 @@ class Backend(QObject):
                 values = store.load(value)
                 candidate = parse_text(serialize(self.config)); candidate['ai'].update(values); validate(candidate)
                 self.config = candidate
-                self.save_state = '有修改 · 未保存'
                 self.ai_status = '已切换档案 · 请主动测试；视觉仅为用户声明'
-                self.configChanged.emit()
+                self.settings_edited()
                 self.feedback('profiles', '已显式切换 AI 档案；没有联网。请检查目标、模型与视觉声明。', 'success')
             elif action == 'delete':
                 store.delete(value)
@@ -1044,9 +1051,7 @@ class Backend(QObject):
             if key == "provider" and value == "SiliconFlow":
                 self.config["ai"]["endpoint"] = "https://api.siliconflow.cn/v1"
                 self.config["ai"]["model"] = "deepseek-ai/DeepSeek-R1"
-        self.save_state = "有修改 · 未保存"
-        self.configChanged.emit()
-        self.changed.emit()
+        self.settings_edited()
 
     @Slot(str, bool)
     def toggleProvider(self, key, checked):
@@ -1101,7 +1106,7 @@ class Backend(QObject):
     def begin(self, action, demo=False, selected=None, topic=''):
         self._begin(action, demo, selected, topic)
 
-    def _begin(self, action, demo=False, selected=None, topic='', resume=None):
+    def _begin(self, action, demo=False, selected=None, topic='', resume=None, *, saved_session=False):
         if self.busy:
             raise ValueError("请先停止当前任务。")
         if resume is not None:
@@ -1114,6 +1119,8 @@ class Backend(QObject):
             account = defaults()
             for key in ('username', 'password', 'use_cookies'):
                 account['common'][key] = self.config['common'][key]
+            if saved_session:
+                account['common'].update(password='', use_cookies='true')
             cookie = self.cookie_path() if self.account_store and self.account_store.active else data_dir() / 'no-account-cookie'
             validate(account, login=True, cookie_path=cookie)
             self.ensure_account()
@@ -1158,6 +1165,7 @@ class Backend(QObject):
             config = isolated
         self.cancel_course_progress()
         self.operation, self.outcome = action, False
+        self._restoring_session = saved_session
         self.ai_usage = dict(requests=0, limit=int(config['ai']['request_limit']), known=0, unknown=0, tokens=0)
         self._ai_token_warning = int(config['ai']['token_warning'])
         self.operation_account = self.account_store.active if self.account_store and not demo and action in ('courses', 'run') else ''
@@ -1451,6 +1459,16 @@ class Backend(QObject):
     @Slot()
     def fetchCourses(self):
         self.execute(lambda: self.begin("courses"))
+
+    def restore_saved_session(self):
+        if (self.startup_error or self._closed or self.settings_close_pending or self.busy
+                or self._browser_login or self.config['desktop']['auto_login'].lower() != 'true'
+                or not self.account_store or not self.account_store.active):
+            return
+        try:
+            self._begin('courses', saved_session=True)
+        except Exception as exc:
+            self.notify(f'启动时登录失败：{exc}。请在账号页重新登录。', 'warning')
 
     @Slot()
     def startTasks(self):
@@ -2051,6 +2069,9 @@ class Backend(QObject):
         elif not self.outcome:
             self.mode = "后台异常退出"
             self.message, self.tone = f"后台退出（{code}），未收到完成结果。请检查软件目录及日志。", 'danger'
+        if self._restoring_session and not self.controller.stopping and self.course_identity is None:
+            self.message = f'启动时登录失败。请在账号页重新登录。{self.message}'
+        self._restoring_session = False
         if self.operation == 'run':
             saved = self.save_run_summary(self.mode)
             error = self.history_error
@@ -2066,19 +2087,46 @@ class Backend(QObject):
     def save(self):
         if self.busy:
             return False
+        return self._save_settings()
+
+    def schedule_settings_save(self):
+        self._settings_timer.stop()
+        if (self.settings_dirty and not self.startup_error and not self.settings_close_pending
+                and self.config['desktop']['auto_save'].lower() == 'true'):
+            self._settings_timer.start()
+
+    def settings_edited(self):
+        dirty = settings_snapshot(self.config) != self._saved_settings
+        if dirty or self.settings_dirty:
+            self.settings_dirty = dirty
+            self.save_state = ("有修改 · 未保存" if dirty else
+                               "读取失败 · 原文件已保留" if self.startup_error else "设置已同步")
+            self.schedule_settings_save()
+        self.configChanged.emit()
+        self.changed.emit()
+
+    def _save_settings(self, automatic=False, *, exiting=False):
+        self._settings_timer.stop()
+        if automatic and (not self.settings_dirty or self.startup_error or self.settings_close_pending):
+            return False
         try:
-            self._closed = False
             validate(self.config)
             path = data_dir() / "settings.ini"
             self._settings_revision = write_if_unchanged(path, serialize_settings(self.config).encode('utf-8'), self._settings_revision)
+            self._saved_settings = settings_snapshot(self.config)
+            self.settings_dirty = False
             self.startup_error = None
-            self.save_state = "设置已保存"
-            self.notify("设置及服务凭据已在本机保存。登录密码仅用于当前会话。", "success")
+            self.save_state = "配置已自动保存" if automatic else "设置已保存"
+            if automatic or exiting:
+                self.changed.emit()
+            else:
+                self.notify("设置及服务凭据已在本机保存。登录密码仅用于当前会话。", "success")
             return True
         except Exception as exc:
-            self.save_state = "保存失败 · 未保存"
+            self.save_state = "自动保存失败 · 未保存" if automatic else "保存失败 · 未保存"
             self.notify(exc, "danger")
-            self.locate_invalid_field(exc)
+            if not automatic and not exiting:
+                self.locate_invalid_field(exc)
             return False
 
     def locate_invalid_field(self, error=None):
@@ -2116,26 +2164,13 @@ class Backend(QObject):
     def discardAndClose(self):
         return self._close(True)
 
-    def _prepare_close(self, discard):
-        if self._closed:
-            return True
-        # Validate/save before stopping, so a failed save preserves the live window.
-        if not self.startup_error and not discard:
-            try:
-                validate(self.config)
-                path = data_dir() / "settings.ini"
-                self._settings_revision = write_if_unchanged(path, serialize_settings(self.config).encode('utf-8'), self._settings_revision)
-            except Exception as exc:
-                self.save_state = "保存失败 · 未保存"
-                self.notify(exc, "danger")
-                return False
-        return True
-
     def _close(self, discard):
         if self._closed:
             return True
-        if not self._prepare_close(discard):
+        # Keep the legacy QML close contract. Native WinUI asks before saving.
+        if not discard and self.settings_dirty and not self.startup_error and not self._save_settings(exiting=True):
             return False
+        self._settings_timer.stop()
         self.stop()
         self.cancel_course_progress()
         if self._course_controller.active:
@@ -2177,8 +2212,7 @@ class Backend(QObject):
                     self.sync_providers()
                     self.providersChanged.emit()
                     self.ai_status = "配置已导入 · 请重新测试"
-                    self.save_state = "有修改 · 未保存"
-                    self.configChanged.emit()
+                    self.settings_edited()
                 else:
                     cookies = parse_cookie(text)
                     row = self.ensure_account()
