@@ -6,7 +6,7 @@ import configparser
 import json
 
 from . import credentials
-from .config import parser, serialize
+from .config import is_secret, parser, serialize
 
 CREDENTIAL_SECTION = "desktop_credentials"
 STORED_SECRETS = {
@@ -16,13 +16,25 @@ STORED_SECRETS = {
 }
 
 
+def _service_credentials(config):
+    secrets = {section: {key: config[section][key] for key in keys if config[section][key]}
+               for section, keys in STORED_SECRETS.items()}
+    return {section: values for section, values in secrets.items() if values}
+
+
+def settings_snapshot(config):
+    # Account selection and Cookie files have their own persistence.
+    return ({section: {key: value for key, value in config[section].items()
+                       if not is_secret(key) and (section != 'common' or key not in ('username', 'use_cookies'))}
+             for section in config.sections() if section != CREDENTIAL_SECTION},
+            _service_credentials(config))
+
+
 def serialize_settings(config: configparser.ConfigParser) -> str:
     public = parser()
     public.read_string(serialize(config, include_secrets=False))
     public.remove_section(CREDENTIAL_SECTION)
-    secrets = {section: {key: config[section][key] for key in keys if config[section][key]}
-               for section, keys in STORED_SECRETS.items()}
-    secrets = {section: values for section, values in secrets.items() if values}
+    secrets = _service_credentials(config)
     if secrets:
         try:
             encrypted = credentials.protect(json.dumps(secrets, ensure_ascii=False).encode("utf-8"))

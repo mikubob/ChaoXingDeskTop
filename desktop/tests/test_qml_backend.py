@@ -35,7 +35,8 @@ class QmlBackendTests(unittest.TestCase):
 
     def test_all_preexisting_editable_settings_are_represented(self):
         represented = {(f["section"], f["key"]) for groups in SCHEMA.values() for g in groups for f in g["fields"]}
-        represented |= {("common", "username"), ("common", "password"), ("common", "use_cookies")}
+        represented |= {("common", "username"), ("common", "password"), ("common", "use_cookies"),
+                        ("desktop", "auto_login")}  # Native account panel.
         represented |= {("question_bank", k) for k in ("providers", "yanxi_tokens", "like_tokens", "adapter_url", "go_authorization", "declarative_token")}
         config = defaults()
         expected = {(s, k) for s in config.sections() for k in config[s]} - {("tiku", "provider"), ("tiku", "cover_rate"), ("format", "version")}
@@ -177,6 +178,21 @@ class QmlBackendTests(unittest.TestCase):
         self.assertFalse(b.close())
         self.assertEqual(path.read_bytes(), previous)
         b.setValue("common", "speed", "1")
+
+    def test_autosave_protects_unreadable_settings_until_explicit_save(self):
+        path = Path(self.directory.name) / "settings.ini"
+        path.write_text("not an INI file", encoding="utf-8")
+        reopened = Backend()
+        try:
+            reopened.setValue('common', 'speed', '1.5')
+            self.assertTrue(reopened.summary['settingsDirty'])
+            self.assertFalse(reopened._settings_timer.isActive())
+            self.assertEqual(path.read_text(encoding="utf-8"), "not an INI file")
+            self.assertTrue(reopened.save())
+            self.assertIn('speed = 1.5', path.read_text(encoding="utf-8"))
+        finally:
+            reopened.discardAndClose()
+            reopened.deleteLater()
 
     def test_account_change_blocks_real_start(self):
         b = self.b

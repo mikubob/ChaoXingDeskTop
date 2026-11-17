@@ -27,7 +27,7 @@ BOOLEAN_KEYS = {
     "ai": ("enabled", "vision", "check_connection"),
     "discussion": ("enabled", "auto_submit"),
     "activity": ("enabled", "auto_submit"),
-    "desktop": ("manual_fallback", "random_fallback"),
+    "desktop": ("manual_fallback", "random_fallback", "auto_save", "auto_login"),
     "question_bank": ("likeapi_search", "likeapi_vision", "likeapi_retry", "yanxi_query_variants"),
     "matching": ("fuzzy_options", "reuse_similar"),
 }
@@ -71,7 +71,7 @@ def defaults() -> configparser.ConfigParser:
         "ai": dict(enabled="false", provider="AI", endpoint="", key="", model="",
                    vision="false", min_interval_seconds="3.0", http_proxy="",
                    check_connection="true", timeout="60", retries="2", request_limit="0", token_warning="0"),
-        "desktop": dict(manual_fallback="false", random_fallback="false"),
+        "desktop": dict(manual_fallback="false", random_fallback="false", auto_save="true", auto_login="false"),
         "discussion": dict(enabled="false", reply_level="medium", auto_submit="false"),
         "activity": dict(enabled="false", choice_strategy="ai", text_strategy="ai", reply_level="medium", auto_submit="false"),
         "logging": dict(directory=""),

@@ -109,7 +109,8 @@ public sealed partial class MainWindow
                 Row(label, saveNote, clearCookie));
         var accountCard = Card(Column(Text("学习账户", 17), Text("多个账号可同时保留登录会话，Cookie 按账号加密保存。密码仅用于当前会话。", 12, true),
             StretchRow(accounts, Row(add, remove)),
-            cookieEntry, detail, Button("离线演示", async () => await Call("loadDemo"), true)));
+            cookieEntry, BoundToggle("启动时使用已保存会话登录", "desktop", "auto_login"),
+            detail, Button("离线演示", async () => await Call("loadDemo"), true)));
         accountCard.MaxWidth = 880;
         accountCard.HorizontalAlignment = HorizontalAlignment.Center;
         accountCard.VerticalAlignment = VerticalAlignment.Center;

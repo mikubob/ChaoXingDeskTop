@@ -156,15 +156,33 @@ public sealed partial class MainWindow
                 finally { currentDialog?.Hide(); await shown; }
             }
             if ((await Call("save"))?.ToString() != "true") throw new InvalidOperationException("设置未能保存。");
-            // Also close during an active offline worker, using the normal save
-            // handshake and hide path rather than merely terminating the app.
+            smokeStep = "tray and close";
+            if (fields["desktop.auto_login"] is not ToggleSwitch { IsOn: false })
+                throw new InvalidOperationException("启动登录开关缺失或默认启用。");
+            await Call("setValue", "desktop", "auto_save", "false");
             await Call("startTasks");
+            await Click(TrayButton);
+            if (AppWindow.IsVisible) throw new InvalidOperationException("窗口未收起到通知区。");
+            var hiddenPage = Navigation.SelectedIndex;
+            await WaitFor(() => J.I(Summary, "total") > 0);
+            OnMessage(new JsonObject { ["type"] = "activate" });
+            if (!AppWindow.IsVisible || Navigation.SelectedIndex != hiddenPage)
+                throw new InvalidOperationException("恢复窗口时未保留原工作区。");
+            var returning = RequestCloseAsync();
+            await WaitFor(() => currentDialog is { Title: "有未保存的设置", IsLoaded: true });
+            var returnButton = FindDescendant<Button>(currentDialog!, b => b.Content?.ToString() == "返回编辑")
+                ?? throw new InvalidOperationException("退出提示缺少返回编辑按钮。");
+            await Click(returnButton);
+            await returning;
+            if (!AppWindow.IsVisible || !J.B(Summary, "settingsDirty"))
+                throw new InvalidOperationException("返回编辑后窗口或未保存设置丢失。");
             var closeTimer = System.Diagnostics.Stopwatch.StartNew();
-            if ((await Call("close"))?.ToString() != "true") throw new InvalidOperationException("退出保存未完成。");
+            if ((await Call("close"))?.ToString() != "confirm" || (await Call("saveAndClose"))?.ToString() != "true")
+                throw new InvalidOperationException("退出保存未完成。");
             HideForClose();
             if (AppWindow.IsVisible || closeTimer.Elapsed > TimeSpan.FromSeconds(1))
                 throw new InvalidOperationException("关闭窗口仍在等待后台清理。");
-            success = true; message = "WinUI 3 系统/浅色/深色主题、主题保存、交互动效、宽窄布局和离线任务验收通过。";
+            success = true; message = "WinUI 3 主题、交互动效、宽窄布局、离线任务、托盘和退出提示验收通过。";
         }
         catch (Exception e) { message = e.Message; }
         Directory.CreateDirectory(smokeDestination);

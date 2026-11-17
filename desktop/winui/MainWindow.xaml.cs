@@ -15,6 +15,7 @@ namespace ChaoxingDesktop;
 public sealed partial class MainWindow : Window
 {
     private readonly BackendClient backend;
+    private readonly TrayIcon tray;
     private readonly List<FrameworkElement> pages = new();
     private readonly List<Action> refreshers = new();
     private readonly List<Control> idleControls = new();
@@ -31,7 +32,8 @@ public sealed partial class MainWindow : Window
     private TextBlock? selectedText, courseCount, emptyCourses;
     private ListView? courses;
     private TextBox? courseSearch;
-    private bool refreshing, closing, closePending, showIds;
+    private bool refreshing, closing, showIds;
+    private TaskCompletionSource? closePending;
     private ContentDialog? currentDialog, manualDialog;
     private string inputSignature = "";
     private readonly Queue<Func<Task>> dialogs = new();
@@ -52,7 +54,11 @@ public sealed partial class MainWindow : Window
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
         double scale = GetDpiForWindow(hwnd) / 96.0;
         appWindow.Resize(new Windows.Graphics.SizeInt32((int)(1280 * scale), (int)(860 * scale)));
-        appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "app.ico"));
+        string iconPath = Path.Combine(AppContext.BaseDirectory, "app.ico");
+        appWindow.SetIcon(iconPath);
+        tray = new TrayIcon(hwnd, iconPath,
+            () => DispatcherQueue.TryEnqueue(RestoreWindow),
+            () => DispatcherQueue.TryEnqueue(async () => { RestoreWindow(); await RequestCloseAsync(); }));
         if (appWindow.Presenter is OverlappedPresenter presenter) presenter.PreferredMinimumWidth = (int)(980 * scale);
         if (appWindow.Presenter is OverlappedPresenter presenter2) presenter2.PreferredMinimumHeight = (int)(700 * scale);
         appWindow.Closing += OnClosing;
@@ -63,7 +69,7 @@ public sealed partial class MainWindow : Window
         backend = new BackendClient(DispatcherQueue);
         backend.Received += OnMessage;
         backend.Failed += message => { if (!closing) Error(message); };
-        Closed += (_, _) => backend.Dispose();
+        Closed += (_, _) => { tray.Dispose(); backend.Dispose(); };
         Root.Loaded += (_, _) => { try { backend.Start(); } catch (Exception e) { Error(e.Message); } };
         Root.Loaded += (_, _) => AttachInteractionMotion(Root);
     }
@@ -146,7 +152,7 @@ public sealed partial class MainWindow : Window
         }
         else if (type == "clipboard") { var data = new DataPackage(); data.SetText(J.S(message, "text")); Clipboard.SetContent(data); }
         else if (type == "openUrl") _ = Windows.System.Launcher.LaunchUriAsync(new Uri(J.S(message, "url")));
-        else if (type == "activate") Activate();
+        else if (type == "activate") RestoreWindow();
         else if (type == "alreadyRunning") { closing = true; Close(); }
         else if (type == "event") HandleEvent(J.S(message, "name"), message["args"] as JsonArray ?? new());
     }
@@ -211,20 +217,60 @@ public sealed partial class MainWindow : Window
     }
     private void ShowRelease(object sender, RoutedEventArgs e) => EnqueueDialog(async () => await ShowText("版本、发行说明与校验信息", J.S(backend.State, "releaseInfo"), Row(Button("检查版本网页…", async () => await Call("releaseAction", "latest")), Button("发行说明…", async () => await Call("releaseAction", "notes")), Button("复制校验说明", async () => await Call("releaseAction", "copy")))));
 
+    private void MinimizeToTray(object sender, RoutedEventArgs args)
+    {
+        if (closing || closePending != null) return;
+        if (tray.Show()) AppWindow.Hide();
+        else Error("无法添加通知区图标，窗口仍可正常使用。");
+    }
+
+    private void RestoreWindow()
+    {
+        if (closing) return;
+        tray.Hide();
+        if (!AppWindow.IsVisible) AppWindow.Show();
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+            presenter.Restore();
+        Activate();
+    }
+
     private async void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (closing) return;
-        if (!backend.Connected) { closing = true; return; }
+        if (!backend.Connected && closePending == null) { closing = true; return; }
         args.Cancel = true;
-        if (closePending) return;
-        closePending = true;
-        if ((await Call("close"))?.ToString() == "true") { await FinishCloseAsync(); return; }
-        EnqueueDialog(async () =>
+        await RequestCloseAsync();
+    }
+
+    private async Task RequestCloseAsync()
+    {
+        if (closing || closePending != null) return;
+        var decision = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        closePending = decision;
+        try
         {
-            if (await Confirm("退出前保存未完成", J.S(Summary, "message") + "\n返回修正后可再次保存。", "放弃修改并退出"))
-                if ((await Call("discardAndClose"))?.ToString() == "true") await FinishCloseAsync();
-            closePending = false;
-        });
+            if (!backend.Connected) { closing = true; Close(); return; }
+            var status = (await Call("close"))?.ToString();
+            if (status == "true") { await FinishCloseAsync(); return; }
+            if (status != "confirm") return;
+
+            manualDialog?.Hide();
+            var dialog = Dialog("有未保存的设置", Text("退出后会停止后台任务。要保存当前设置吗？"), "返回编辑");
+            dialog.PrimaryButtonText = "保存并退出";
+            dialog.SecondaryButtonText = "放弃并退出";
+            var result = await ShowModal(dialog);
+            var method = result == ContentDialogResult.Primary ? "saveAndClose" :
+                result == ContentDialogResult.Secondary ? "discardAndClose" : null;
+            if (method != null && (await Call(method))?.ToString() == "true")
+                await FinishCloseAsync();
+        }
+        catch (Exception e) { Error(e.Message); }
+        finally
+        {
+            if (!closing && backend.Connected) await Call("cancelClose");
+            closePending = null;
+            decision.SetResult();
+        }
     }
 
     private async Task FinishCloseAsync()
@@ -237,6 +283,7 @@ public sealed partial class MainWindow : Window
     private void HideForClose()
     {
         closing = true;
+        tray.Hide();
         dialogs.Clear();
         currentDialog?.Hide();
         manualDialog?.Hide();
@@ -275,7 +322,8 @@ public sealed partial class MainWindow : Window
         await modalGate.WaitAsync();
         try
         {
-            if (closing || stillWanted?.Invoke() == false) return ContentDialogResult.None;
+            if (closing || (manual && closePending != null) || stillWanted?.Invoke() == false)
+                return ContentDialogResult.None;
             currentDialog = dialog;
             if (manual) manualDialog = dialog;
             return await dialog.ShowAsync();

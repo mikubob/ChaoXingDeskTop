@@ -141,6 +141,9 @@ SCHEMA['advanced'].insert(0, group('请求控制', '单题限制与 AI 整轮上
     field('每题每服务请求预算', 'question_bank', 'request_budget', 'integer', 1, 100,
           hint='包括重试与格式重查；同轮同一章节题目重复处理共享预算。AI 整轮上限在 AI 设置中。'),
 ]))
+SCHEMA['advanced'].insert(0, group("配置保存", "关闭自动保存后，可使用「保存设置」保存改动。", [
+    field("自动保存配置", "desktop", "auto_save", "bool"),
+]))
 SCHEMA['bank_declarative'] = [group('声明式 JSON 题库', '仅支持字段模板和响应路径，不执行脚本。', [
     field('JSON 题库定义', 'question_bank', 'declarative_definition', 'multiline', hint='可导入或导出不含 Token 的模板'),
     field('最小请求间隔 / 秒', 'question_bank', 'declarative_min_interval', 'number', 0, 3600),
