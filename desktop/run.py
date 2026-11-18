@@ -1,6 +1,9 @@
 import sys
 
 if __name__ == "__main__":
+    if "--legacy-qml" in sys.argv and "--smoke-test" in sys.argv:
+        print("离线发行验收仅支持 WinUI 3，请移除 --legacy-qml。", file=sys.stderr)
+        raise SystemExit(2)
     from chaoxing_desktop.launch_bootstrap import relaunch_if_needed
     bootstrap_result = relaunch_if_needed()
     if bootstrap_result is not None:

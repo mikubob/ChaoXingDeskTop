@@ -1,8 +1,8 @@
 # 桌面版使用与开发指南
 
-**版本：0.6.0** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
+**版本：0.6.1** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
 
-[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.0) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.1) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 本文中的命令默认在 `desktop` 目录的 PowerShell 中执行。
 
@@ -16,7 +16,7 @@
 
 安装后可通过桌面或开始菜单快捷方式启动。升级前退出旧程序，再安装到原目录；安装器保留原 `installation.json`，沿用已有设置、账号、Cookie 和凭据。卸载保留个人数据。
 
-从 0.4.2 及更早的 QML 界面版本覆盖安装到 WinUI 3 版本时，安装器按 `scripts/retired-runtime-0.3.5.txt` 与 `scripts/retired-runtime-0.4.2.txt` 清理新版本已停用的旧前端文件及 0.4.2 安装包附带的源码 ZIP。清理限于清单逐项列出的安装文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
+覆盖安装时，安装器按清单移除已经停用的旧 QML 运行文件，以及 0.4.2、0.5.0 和 0.6.0 安装包附带的旧源码 ZIP。清理限于点名文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
 
 如果使用完整程序目录，打开 `ChaoxingDesktop.exe` 即可。请保留 `_internal`、`ChaoxingWorker.exe` 及目录中的其他文件；后台组件由主程序启动。
 
@@ -24,7 +24,7 @@
 
 ### 1. 账号与课程
 
-在「课程与账号」点击「浏览器登录」完成扫码或网页登录，程序会自动获取 Cookie 并读取课程；也可手动登录或导入 Cookie。可以添加多个账号，为其设置备注，并分别保留加密会话；重启后恢复最后选择的账号。
+在「课程与账号」点击「浏览器登录并读取课程」完成扫码或网页登录，程序会自动获取 Cookie 并读取课程；也可手动登录或导入 Cookie。可以添加多个账号，为其设置备注，并分别保留加密会话；重启后恢复最后选择的账号。
 
 WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保存后，启动时会验证当前账号的加密 Cookie 并读取课程，成功后进入课程列表。Cookie 缺失、过期或验证失败时，在账号页重新登录。此过程只使用 Cookie，不启动学习任务。
 
@@ -52,7 +52,7 @@ WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保�
 
 题库按顺序查询，AI 补全未解决的题目，人工补全处理剩余答案。随机补全默认关闭，开启后仅处理仍未解决的单选、多选和判断题。
 
-默认只保存答案。自动提交需独立开启，并要求所有题目已有答案；仍有空白题目时仅保存。填空按真实命名空位逐一对应，多空答案使用 JSON 字符串数组。声明式题库可选 `completion_separator`（1–16 字符），仅在来源明确约定时拆分多空答案；未声明时不猜测分隔符。AI 按 `blank_count` 逐空作答，空数、布局、段数与保存响应异常分别诊断。未知 hidden/editor 映射保留待处理。
+默认只保存答案。自动提交需独立开启并确认提交范围，并要求所有题目已有答案；仍有空白题目时仅保存。填空按真实命名空位逐一对应，多空答案使用 JSON 字符串数组。声明式题库可选 `completion_separator`（1–16 字符），仅在来源明确约定时拆分多空答案；未声明时不猜测分隔符。AI 按 `blank_count` 逐空作答，空数、布局、段数与保存响应异常分别诊断。未知 hidden/editor 映射保留待处理。
 
 ### 4. 进度与任务控制
 
@@ -68,7 +68,7 @@ WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保�
 
 ## 账号与本机数据
 
-在「课程与账号」点击「浏览器登录」，程序会打开独立的 Edge / Chrome 窗口。在网页中完成扫码或账号登录，进入个人空间后，程序自动获取超星 Cookie、按账号加密保存，并验证登录和读取课程，无需手动复制。首次使用无需填写桌面端账号或密码；登录其他账号时先点击「添加账号」。已有账号只接受同一用户的会话。
+在「课程与账号」点击「浏览器登录并读取课程」，程序会打开独立的 Edge / Chrome 窗口。在网页中完成扫码或账号登录，进入个人空间后，程序自动获取超星 Cookie、按账号加密保存，并验证登录和读取课程，无需手动复制。首次使用无需填写桌面端账号或密码；登录其他账号时先点击「添加账号」。已有账号只接受同一用户的会话。
 
 此功能需要已安装 Microsoft Edge 或 Google Chrome。登录窗口使用临时独立配置和无痕模式，不读取日常浏览器的登录资料；成功、取消或超时后关闭该窗口并清理临时配置。登录期间可点击「取消浏览器登录」；若单位策略禁用本地浏览器调试，仍可使用「导入 Cookie」。
 
@@ -91,17 +91,17 @@ WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保�
 
 - 课程底栏的「查看本轮策略」集中显示三类提交开关、隐藏的已选课程、题库顺序、AI／人工／随机与通知类型。首次使用或修改自动提交策略后确认一次；普通只保存不增加确认。确认期间账号、会话、课程或配置变化会使确认失效。
 - 服务页默认显示紧凑题库列表，展开所选详情；「AI 设置」可直接进入 AI 表单。编辑、启用与排序保留输入控件。真实连接检查需主动触发，可能消耗额度；配置变化使上次检查过期。
-- 「任务与日志 → 需处理」汇总章节、题目、讨论和活动的原因，可按类别与关键词筛选、键盘打开全文。聚合显示最多 2000 项／8 MiB，淘汰显示不会清除防重记录。日志默认收起，可随时展开。
+- 「任务与日志 → 需处理」汇总章节、题目、讨论和活动的原因，可按类别与关键词筛选、键盘打开全文。聚合显示最多 2000 项／8 MiB，淘汰显示不会清除防重记录。运行日志位于同页的「运行日志」标签，可按文本和级别筛选。
 - 「只读核验章节」仅使用当前已读取课程的 Cookie 会话，重新读取章节完成状态。「核验本人讨论／活动」另读任务卡与本人参与证据，分别展示本人状态、任务点和章节状态。未知卡数时最多扫描 7 卡。两个入口均不生成、保存答案、提交、发布或调用活动完成回调，也不清除 unknown／intent；未找到记录不能解除重发限制。会话过期时先重新读课，不回退到密码登录。
 - 「高级设置 → 导出排障配置」只导出已知布尔、枚举、数值策略和版本。地址、凭据、账号、正文和未知扩展字段全部省略；完整 INI 仍为明确标注含凭据的个人备份选项。数据说明可查看 profile、DPAPI 和备份边界。
 - 「运行摘要」按账号隔离，最多 20 轮／2 MiB，每轮最多 1000 个未完成章节标题及定位；最多每 2 秒写入一次原子快照。摘要包含课程名和课程／章节标识，未加密，不保存题干或答案。「从摘要选课」先重新核实身份并读课，再选择能定位的未完成课程；不自动启动，不重放旧请求。旧摘要没有定位时仍可回看，需手动选课。
 - AI 设置新增「每次操作 AI 请求硬上限」，0 为不限。一次课程运行内，连接预检、测验、讨论和活动共享上限，重试也计数；主动连接检查和预览分别为独立操作。可设服务返回 token 的累计告警（0 关闭），只告警、不阻断；缺失 usage 显示未知，不估造 token 或账单。
-- 「命名 AI 档案」可把当前设置保存为默认档案，再显式切换不同地址、模型、视觉声明、请求限制与独立凭据。每个档案整份配置使用 Windows 用户 DPAPI 加密；最多 20 项／256 KiB。运行中锁定，没有自动备用提供商。删除档案保留当前已加载设置副本；完整 INI 不含这些档案，备份需保留 `ai_profiles.json`。
+- 「管理 AI 档案」可将当前设置按名称保存，再显式加载不同地址、模型、视觉声明、请求限制与独立凭据。每个档案整份配置使用 Windows 用户 DPAPI 加密；最多 20 项／256 KiB。运行中锁定，没有自动备用提供商。删除档案保留当前已加载设置副本；完整 INI 不含这些档案，备份需保留 `ai_profiles.json`。
 - 声明式题库导入先展示域名、方法、请求／响应映射和拒绝字段，校验通过后再确认替换。校验失败不能导入，不执行脚本，也不触发连接检查。
 - 讨论和问卷详情可打开「编辑本地副本」；显式标记人工来源，支持按原生题目／选项 ID 修改与约束提示、版本保存、复制和导出。仅编辑已确认的本地草稿，问卷未答完整但明确保存为草稿时也可修正。原始记录、生产意图和平台状态不变。停止／异常退出后的旧显示来源、unknown／intent 和已提交记录保持只读。重启后的副本可回看导出，来源重新确认前只读。
-- 人工副本在 `draft_copies/` 按账号保存，最多 20 项／2 MiB，含题目和正文、未加密。满容量不自动淘汰；可先导出，再经确认删除独立副本，删除不影响原始草稿或防重记录。当前没有副本提交入口，第二期前置合同见 [REVIEWED_SUBMISSION_CONTRACT.md](REVIEWED_SUBMISSION_CONTRACT.md)。
+- 人工副本在 `draft_copies/` 按账号保存，最多 20 项／2 MiB，含题目和正文、未加密。满容量不自动淘汰；可先导出，再经确认删除独立副本，删除不影响原始草稿或防重记录。人工副本可编辑、复制和导出。
 - 「任务与日志 → 容量」查看各显示保留／淘汰、日志积压／峰值／失败批次和导出范围。左下「版本与校验」查看运行方式和 profile、主动打开发行网页或复制不含账号／路径的版本校验说明；不自动下载、执行或宣称版本最新，也不代替实际安装包哈希核对。
-- 关闭重做／追加次数时从属参数禁用且保留；保存数值、枚举或模板错误时跳转并聚焦对应文本、多行、开关或选择控件。必要灰色文字提高对比度。最小逻辑窗口仍为 980×700，高 DPI 实机与跨屏验收仍待进行。
+- 关闭重做／追加次数时从属参数禁用且保留；保存数值、枚举或模板错误时跳转并聚焦对应文本、多行、开关或选择控件。必要灰色文字提高对比度。最小窗口为 980 × 700 逻辑像素。
 
 ## 源码运行
 
@@ -110,14 +110,15 @@ WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保�
 ```powershell
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
+./scripts/build-winui.ps1
 .venv/Scripts/python.exe run.py
 ```
 
 `run.py` 是主程序入口，默认启动原生 WinUI 3 界面。首次运行前安装 .NET 8 SDK 并执行 `./scripts/build-winui.ps1`。后台进程使用 `--bridge` / `--worker` 模式，保留 Python 业务层与 Qt Core 模型；文件选择和界面渲染由 WinUI 负责。原 QML 参考界面可通过显式 `--legacy-qml` 启动。[原生界面开发与构建](winui/README.md)
 
-## 测试
+## 构建环境
 
-测试和发行构建使用独立 `.venv-build` 环境。先安装锁定的运行与构建依赖：
+发行构建使用独立的 `.venv-build` 环境，并验证锁定的依赖：
 
 ```powershell
 python -m venv .venv-build
@@ -126,46 +127,24 @@ python -m venv .venv-build
 .venv-build/Scripts/python.exe -m pip check
 ```
 
-运行单元与界面回归：
-
-```powershell
-.venv-build/Scripts/python.exe -m unittest discover -s tests -p 'test_*.py'
-.venv-build/Scripts/python.exe tests/qml_ui_smoke.py
-.venv-build/Scripts/python.exe tests/ocs_ui_smoke.py
-.venv-build/Scripts/python.exe tests/matching_ui_smoke.py build/matching-ui-smoke
-.venv-build/Scripts/python.exe tests/accounts_ui_smoke.py
-.venv-build/Scripts/python.exe tests/audit_ui_smoke.py
-.venv-build/Scripts/python.exe tests/activity_ui_smoke.py
-.venv-build/Scripts/python.exe tests/services_media_smoke.py build/services-media-smoke
-.venv-build/Scripts/python.exe tests/workbench_ui_smoke.py build/workbench-ui-smoke
-```
-
-运行离线负载测试：
-
-```powershell
-.venv-build/Scripts/python.exe tests/performance_smoke.py --tasks 10000 --events 3000 --questions 1000 --rounds 3 --max-round-seconds 20 --max-heartbeat-p95-ms 500 --output build/performance.json
-```
-
-上述测试使用隔离数据与离线模拟。`tests/account_check.py` 是另行执行的手动只读工具，通过隐藏交互输入凭据，不属于离线回归。
-
 ## 构建与发布
 
 ### 构建程序
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.0/ChaoxingDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.1/ChaoxingDesktop
 ```
 
-构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后运行单元回归、发布自包含 WinUI 3 界面、使用 PyInstaller 打包 Python 后台，最后验收冻结 worker 与原生界面。开发机还需要 .NET 8 SDK。
+构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后发布自包含 WinUI 3 界面，使用 PyInstaller 打包 Python 后台，并验收冻结后台与原生界面。开发机还需要 .NET 8 SDK。
 
-程序输出至 `dist/release-0.6.0/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
+程序输出至 `dist/release-0.6.1/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
 
-先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与单元、worker、GUI 三项验收标记，因此必须先完成带 GUI 验收的构建：
+先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与冻结后台和原生界面的验收标记，因此必须先完成带 GUI 验收的构建：
 
 ```powershell
-.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.0/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
+.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.1/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
 ```
 
 `--compiler` 指向本机的 `makensis.exe`（[NSIS 下载](https://nsis.sourceforge.io/Download)），相对路径以 `desktop` 为基准；`--app` 默认不推断，必须显式给出已验收的程序目录，`--output` 默认写入项目根目录的 `release/`。仓库内 `desktop/build/` 下的 NSIS 与 .NET SDK 属本机工具，不进入源码包，也不随安装包分发。
@@ -173,16 +152,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDir
 产物默认写入项目根目录的 `release/`：
 
 ```text
-ChaoxingDesktop-0.6.0-Setup-win-x64.exe
-ChaoxingDesktop-0.6.0-source.zip
-ChaoxingDesktop-0.6.0-installer-SHA256.json
+ChaoxingDesktop-0.6.1-Setup-win-x64.exe
+ChaoxingDesktop-0.6.1-source.zip
+ChaoxingDesktop-0.6.1-installer-SHA256.json
 ```
 
-安装包包含完整程序、对应源码 ZIP、许可和第三方声明，NSIS 编译器不随包分发。生成安装包前会核对程序版本、源码与产物哈希，以及单元、worker、GUI 验收标记；跳过 GUI 的构建不能用于正式发布。修改构建输入后，需要重新构建和验收。
+安装包包含完整程序、对应源码 ZIP、许可和第三方声明。生成安装包前会核对程序版本、源码与产物哈希，以及冻结后台和原生界面的验收标记。用于正式发布的构建须完成原生界面验收。修改构建输入后，需要重新构建和验收。
 
-安装器与便携打包共用 `scripts/source_bundle.py` 的公共文件清单：只按点名清单收录构建与运行必需的公开资源（含 `assets/app.ico` 这一原生编译输入），不收集历史计划、截图、用户数据或临时文件。升级时只删除 `scripts/retired-runtime-0.3.5.txt` 与 `scripts/retired-runtime-0.4.2.txt` 列出的具体废弃运行文件，不使用通配符或递归删除，也不删除新程序仍包含的文件。
-
-隔离目录中的安装验收可用 `tests/installer_smoke.ps1`：`-PreviousInstaller` 传入任一旧安装包即可验证通用覆盖升级；只有当该安装包是已记录的 0.4.2 QML 载荷（按安装包 SHA-256 或 profile 识别）或显式加 `-ExpectRetiredPayload` 时，才会额外断言退役清单中的旧前端文件已被清理。
+安装器与便携打包共用 `scripts/source_bundle.py` 的公开文件清单，收录构建与运行所需的源码和资源。升级清理按安装器的精确清单执行，保留新版仍包含的文件。
 
 旧版本的更新与验收记录见 [GitHub 发行历史](https://github.com/mikubob/ChaoXingDeskTop/releases)。
 
@@ -199,8 +176,6 @@ ChaoxingDesktop-0.6.0-installer-SHA256.json
 
 当前支持标准主站章节入口到 groupweb v3 的网页合同；旧版、镜像域和无法确认身份的结构保留待处理。图片或附件题意尚未适配时，普通档位保留待处理。字数 / 业务拒绝如实记录；审核中、响应丢失或读回未定保留发布未知，不重复试发。平台明确拒绝的记录保留待处理，当前不自动清除拒绝记录后重试。
 
-2026-10-19 对用户选定的三个真实话题完成发布、正文读回、任务及章节确认、再次运行去重验收；使用预先审阅的正文核验协议，未调用外部 AI 服务。离线测试覆盖四档生成、异常恢复和隔离行为；不把这一条成功样例推广为所有课程 / 页面都已适配。
-
 ## 投票／问卷任务
 
 在「题库与 AI → 投票／问卷」启用活动处理，分别选择选择题策略、文本策略与 AI 回复水平，再独立决定是否自动提交。默认均关闭，测验与讨论的提交开关不影响活动。
@@ -212,7 +187,7 @@ ChaoxingDesktop-0.6.0-installer-SHA256.json
 - 「任务与日志 → 投票／问卷」支持搜索、按状态筛选、逐题查看与复制。来源、生成覆盖、提交确认、任务点和最终章节完成分别记录。
 - `activities/` 存放本地草稿与提交意图，备份应用数据时一并保留。未知意图或损坏记录禁止新提交；不能通过换策略或重启绕过去重。
 
-协议字段与明确边界见 [ACTIVITY_PROTOCOL.md](vendor/chaoxing/api/ACTIVITY_PROTOCOL.md)。离线验收包含 `tests/test_activity.py` 与 `tests/activity_ui_smoke.py`；冻结 worker 自检也覆盖活动模块。
+协议字段与明确边界见 [ACTIVITY_PROTOCOL.md](vendor/chaoxing/api/ACTIVITY_PROTOCOL.md)。冻结后台的发行自检包含活动模块。
 
 ## 来源与许可
 

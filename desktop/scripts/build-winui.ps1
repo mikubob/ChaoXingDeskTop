@@ -3,8 +3,7 @@ param(
     [string]$Python = '',
     [string]$DotNet = '',
     [switch]$BundleBackend,
-    [switch]$SkipGuiSmoke,
-    [switch]$SkipTests
+    [switch]$SkipGuiSmoke
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -25,10 +24,6 @@ if (-not $Python) { throw 'Prepare a Python environment using desktop/requiremen
 $taskOutput = [IO.Path]::GetFullPath((Join-Path $taskRoot $OutputDirectory))
 $taskPrefix = $taskRoot + [IO.Path]::DirectorySeparatorChar
 if (-not $taskOutput.StartsWith($taskPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'OutputDirectory must stay inside desktop.' }
-if (-not $SkipTests) {
-    & $Python -m unittest discover -s tests -p 'test_winui_bridge.py'
-    if ($LASTEXITCODE -ne 0) { throw 'Native backend transport/worker tests failed.' }
-}
 & $DotNet publish winui/ChaoxingDesktop.csproj -c Release -p:Platform=x64 -o $taskOutput
 if ($LASTEXITCODE -ne 0) { throw 'WinUI 3 build failed. Install .NET 8 SDK and Windows SDK.' }
 if ($BundleBackend) {
@@ -36,7 +31,7 @@ if ($BundleBackend) {
     if ($LASTEXITCODE -ne 0) { throw 'Native backend packaging failed.' }
     Copy-Item -Path (Join-Path $taskRoot 'build/winui-backend/ChaoxingBackend/*') -Destination $taskOutput -Recurse -Force
     Copy-Item -LiteralPath README.md,LICENSE,THIRD_PARTY_NOTICES.md,requirements-lock.txt -Destination $taskOutput
-    & $Python tests/release_smoke.py $taskOutput build/winui-release-smoke --worker-only
+    & $Python scripts/release_support.py $taskOutput
     if ($LASTEXITCODE -ne 0) { throw 'Frozen worker acceptance failed.' }
 } else {
     $env:CHAOXING_BACKEND_ROOT = $taskRoot

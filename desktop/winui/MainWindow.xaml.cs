@@ -1,7 +1,7 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Windowing;
 using Windows.ApplicationModel.DataTransfer;
@@ -38,16 +38,20 @@ public sealed partial class MainWindow : Window
     private string inputSignature = "";
     private readonly Queue<Func<Task>> dialogs = new();
     private bool processingDialogs;
+    private readonly string? releaseCheckDirectory;
+    private bool releaseCheckStarted;
     private JsonNode? Summary => backend.State["summary"];
     private bool Busy => J.B(Summary, "busy");
     private string Value(string section, string key) => J.S(backend.State["values"]?[section], key);
     private static readonly string[] Titles = ["课程与账号", "学习设置", "题库与 AI", "高级设置", "任务与日志"];
-    private static readonly string[] Descriptions = ["连接账户，选择课程，开启学习任务。", "设置学习节奏与章节处理策略。", "连接答题服务，配置你的补全流程。", "管理请求参数、识别规则与配置备份。", "关注处理进度，检查结果与待处理事项。"];
 
     public MainWindow()
     {
         InitializeComponent();
-        ConfigureSmoke();
+        var arguments = Environment.GetCommandLineArgs();
+        int check = Array.IndexOf(arguments, "--smoke-test");
+        if (check >= 0 && check + 1 < arguments.Length)
+            releaseCheckDirectory = Path.GetFullPath(arguments[check + 1]);
         InitializeAppearance();
         Title = "超星学习工作台 · WinUI 3";
         var hwnd = WindowNative.GetWindowHandle(this);
@@ -81,19 +85,11 @@ public sealed partial class MainWindow : Window
     {
         bool narrow = Root.ActualWidth < 1100;
         SidebarColumn.Width = new GridLength(narrow ? 184 : 216);
-        PrivacyCard.Visibility = PageDescription.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible;
         Workspace.Margin = new Thickness(Root.ActualHeight < 780 ? 16 : 24);
-        Grid.SetRow(HeaderActions, 0);
-        Grid.SetColumn(HeaderActions, 1);
     }
 
-    // Smoke-only observation seam: records which RPC the product's own dialog
-    // handlers issued, without changing what is sent or how the backend reacts.
-    private readonly List<string> smokeCalls = new();
     private async Task<JsonNode?> Call(string method, params object?[] args)
     {
-        if (smokeDestination != null && method is "reply" or "confirmStartTasks" or "cancelStartTasks")
-            smokeCalls.Add(method + " " + string.Join("|", args.Select(a => a?.ToString() ?? "")));
         try { return await backend.Call(method, args); }
         catch (Exception e) { Error(e.Message); return null; }
     }
@@ -107,7 +103,6 @@ public sealed partial class MainWindow : Window
     {
         var button = new Button { Content = title };
         button.Loaded += (_, _) => AttachInteractionMotion(button);
-        AutomationProperties.SetName(button, title);
         if (color != null) { button.Background = new SolidColorBrush(ParseColor(color)); button.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White); }
         button.Click += async (_, _) => { if (!refreshing) { try { await action(); } catch (Exception e) { Error(e.Message); } } };
         if (idle) idleControls.Add(button);
@@ -148,7 +143,7 @@ public sealed partial class MainWindow : Window
         {
             if (pages.Count == 0) BuildPages();
             Refresh(message["data"] as JsonObject ?? new());
-            if (smokeDestination != null && !smokeStarted) _ = RunSmoke();
+            if (releaseCheckDirectory != null && !releaseCheckStarted) _ = RunReleaseCheck(releaseCheckDirectory);
         }
         else if (type == "clipboard") { var data = new DataPackage(); data.SetText(J.S(message, "text")); Clipboard.SetContent(data); }
         else if (type == "openUrl") _ = Windows.System.Launcher.LaunchUriAsync(new Uri(J.S(message, "url")));
@@ -169,6 +164,47 @@ public sealed partial class MainWindow : Window
         Navigate(Navigation, null!);
     }
 
+    private async Task RunReleaseCheck(string destination)
+    {
+        const int demoCourses = 3;
+        const int demoTasks = 9;
+        releaseCheckStarted = true;
+        AppWindow.Show();
+        Activate();
+        bool success = false;
+        string message;
+        async Task WaitFor(Func<bool> ready)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (!ready())
+            {
+                if (DateTime.UtcNow >= deadline) throw new InvalidOperationException("离线验收超时。" + Notice.Message);
+                await Task.Delay(50);
+            }
+        }
+        try
+        {
+            if (pages.Count != 5 || fields.Count == 0)
+                throw new InvalidOperationException("原生导航或设置表单未加载。");
+            await backend.Call("loadDemo");
+            await WaitFor(() => !Busy && showingMyCourses && courses?.Items.Count == demoCourses);
+            await backend.Call("selectVisible", [true]);
+            await WaitFor(() => J.I(Summary, "selectedCount") == demoCourses);
+            await backend.Call("startTasks");
+            await WaitFor(() => !Busy && resultLists["tasks"].Items.Count == demoTasks && J.I(Summary, "progress") == 100);
+            success = J.B(Summary, "demo") && J.I(Summary, "success") == demoTasks;
+            message = success ? "WinUI 3 离线读课与任务验收通过。" : "离线任务结果与界面记录不一致。";
+        }
+        catch (Exception error) { message = error.Message; }
+
+        Directory.CreateDirectory(destination);
+        await File.WriteAllTextAsync(Path.Combine(destination, "result.json"),
+            JsonSerializer.Serialize(new { success, message, frontend = "WinUI 3" }));
+        Environment.ExitCode = success ? 0 : 1;
+        if (backend.Connected) await Call("discardAndClose");
+        await FinishCloseAsync();
+    }
+
     private void Refresh(JsonObject update)
     {
         refreshing = true;
@@ -176,8 +212,13 @@ public sealed partial class MainWindow : Window
         {
             Notice.Message = J.S(Summary, "message");
             Notice.Severity = J.S(Summary, "tone") switch { "danger" => InfoBarSeverity.Error, "warning" => InfoBarSeverity.Warning, "success" => InfoBarSeverity.Success, _ => InfoBarSeverity.Informational };
-            SaveState.Text = J.S(Summary, "saveState"); ModeText.Text = J.S(Summary, "mode");
+            SaveState.Text = J.S(Summary, "saveState");
+            string mode = J.S(Summary, "mode");
+            if (J.B(Summary, "demo") && !mode.StartsWith("离线演示", StringComparison.Ordinal))
+                mode = mode.Length > 0 ? "离线演示 · " + mode : "离线演示";
+            ModeText.Text = mode == "本地工作台" ? "" : mode;
             BusyRing.IsActive = Busy;
+            BusyRing.Visibility = Busy ? Visibility.Visible : Visibility.Collapsed;
             PauseButton.Visibility = StopButton.Visibility = Busy ? Visibility.Visible : Visibility.Collapsed;
             PauseButton.Content = J.B(Summary, "paused") ? "恢复" : "暂停后续";
             StopButton.Content = J.B(Summary, "stopping") ? "停止中…" : "停止任务";
@@ -185,7 +226,6 @@ public sealed partial class MainWindow : Window
             SaveButton.IsEnabled = !Busy;
             foreach (var control in idleControls) control.IsEnabled = !Busy;
             foreach (var refresh in refreshers) refresh();
-            Footer.Text = J.B(Summary, "demo") ? "离线演示 · 所有课程与任务均为示例" : "学习工作台 · WinUI 3";
             if (update.ContainsKey("courses")) RefreshCourses();
             foreach (var pair in resultLists)
                 if (update.ContainsKey(pair.Key)) RefreshRecords(pair.Key, pair.Value);
@@ -255,7 +295,7 @@ public sealed partial class MainWindow : Window
             if (status != "confirm") return;
 
             manualDialog?.Hide();
-            var dialog = Dialog("有未保存的设置", Text("退出后会停止后台任务。要保存当前设置吗？"), "返回编辑");
+            var dialog = Dialog("有未保存的设置", Text("放弃并退出会丢失本次未保存的修改。退出时，正在运行的后台任务也会停止。"), "返回编辑");
             dialog.PrimaryButtonText = "保存并退出";
             dialog.SecondaryButtonText = "放弃并退出";
             var result = await ShowModal(dialog);

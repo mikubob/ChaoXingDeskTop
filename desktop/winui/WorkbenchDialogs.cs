@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 
@@ -8,10 +9,6 @@ namespace ChaoxingDesktop;
 
 public sealed partial class MainWindow
 {
-    // Smoke-only: the automated run normally auto-answers completion prompts so
-    // a headless run never blocks. While this flag is set the product shows the
-    // real dialog instead, so the native buttons can be exercised.
-    private bool smokeInterceptInput;
     private void HandleEvent(string name, JsonArray args)
     {
         if (name == "coursesLoaded") coursesLoadedPending = true;
@@ -59,7 +56,6 @@ public sealed partial class MainWindow
         if (signature == inputSignature) return;
         inputSignature = signature;
         if (input is not JsonObject obj || obj.Count == 0) { manualDialog?.Hide(); return; }
-        if (smokeDestination != null && !smokeInterceptInput) { _ = Call("reply", "", false); return; }
         manualDialog?.Hide();
         var clone = input.DeepClone();
         EnqueueDialog(() => ShowInput(clone, signature));
@@ -86,21 +82,22 @@ public sealed partial class MainWindow
             if (J.S(input, "type") == "multiple")
             {
                 var check = new CheckBox { Content = Text(text) };
+                AutomationProperties.SetName(check, text);
                 check.Click += (_, _) => { if (check.IsChecked == true) selected.Add(value); else selected.Remove(value); }; panel.Children.Add(check);
             }
             else
             {
                 var radio = new RadioButton { Content = Text(text), GroupName = group };
+                AutomationProperties.SetName(radio, text);
                 radio.Checked += (_, _) => { selected.Clear(); selected.Add(value); }; panel.Children.Add(radio);
             }
         }
         var blanks = new List<TextBox>();
         if (J.S(input, "type") == "completion" && J.I(input, "blankCount") > 0)
             for (int i = 0; i < J.I(input, "blankCount"); i++) { var blank = new TextBox { Header = $"第 {i + 1} 空", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 72 }; blanks.Add(blank); panel.Children.Add(blank); }
-        var answer = new TextBox { PlaceholderText = "填写答案", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
+        var answer = new TextBox { Header = "答案", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
         if (!J.A(input["options"]).Any() && blanks.Count == 0 && J.S(input, "kind") != "choice") panel.Children.Add(answer);
         var feedback = new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Warning, Message = J.B(input, "random") ? "跳过后，选择题和判断题将按随机补全设置处理。" : "跳过后，此题保持待处理。" };
-        panel.Children.Add(feedback);
         var dialog = Dialog(J.S(input, "kind") == "choice" ? "章节处理" : "人工补全", Scroll(panel), "停止任务");
         if (J.S(input, "kind") == "choice")
         {
@@ -108,6 +105,7 @@ public sealed partial class MainWindow
         }
         else
         {
+            panel.Children.Add(feedback);
             dialog.PrimaryButtonText = "使用答案"; dialog.SecondaryButtonText = "跳过此题"; dialog.DefaultButton = ContentDialogButton.Primary;
             dialog.PrimaryButtonClick += async (_, args) =>
             {
@@ -138,15 +136,15 @@ public sealed partial class MainWindow
     private async Task ShowDraft(JsonNode copy)
     {
         var feedback = new InfoBar { IsOpen = true, IsClosable = false, Message = J.S(backend.State, "draftFeedback") };
-        var panel = Column(Text("独立的本机人工副本。保存后可复制或导出。", 12, true), Text(J.S(copy["source"], "title"), 17));
+        var panel = Column(Text(J.S(copy["source"], "title"), 17));
         var editorControls = new List<Control>();
         // Track edits before the bridge responds, including edits made while a save is in flight.
         int edits = 0, savedEdits = 0;
         bool HasUnsavedEdits() => edits != savedEdits || J.B(backend.State, "draftDirty");
         if (J.S(copy, "kind") == "discussion")
         {
-            var editor = new TextBox { Text = J.S(copy, "content"), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 270 };
-            editor.TextChanged += async (_, _) => { edits++; await Call("setDraftContent", editor.Text); };
+            var editor = new TextBox { Header = "讨论回复", Text = J.S(copy, "content"), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 270 };
+            editor.TextChanging += async (sender, _) => { edits++; await Call("setDraftContent", sender.Text); };
             panel.Children.Add(editor); editorControls.Add(editor);
         }
         else
@@ -154,11 +152,13 @@ public sealed partial class MainWindow
             foreach (var question in J.A(copy["source"]?["questions"]))
             {
                 string id = J.S(question, "id"); var initial = await Call("draftAnswer", id);
-                panel.Children.Add(Text(J.S(question, "title"), 15));
+                var questionTitle = Text(J.S(question, "title"), 15);
+                panel.Children.Add(questionTitle);
                 if (J.S(question, "type") == "text")
                 {
                     var text = new TextBox { Text = J.S(initial, "text"), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
-                    text.TextChanged += async (_, _) => { edits++; await Call("setDraftAnswer", id, new { text = text.Text }); };
+                    AutomationProperties.SetLabeledBy(text, questionTitle);
+                    text.TextChanging += async (sender, _) => { edits++; await Call("setDraftAnswer", id, new { text = sender.Text }); };
                     panel.Children.Add(text); editorControls.Add(text);
                 }
                 else
@@ -167,7 +167,9 @@ public sealed partial class MainWindow
                     var boxes = new List<(string Id, CheckBox Box)>(); bool changing = false;
                     foreach (var option in J.A(question["options"]))
                     {
-                        string optionId = J.S(option, "id"); var check = new CheckBox { Content = Text(J.S(option, "text")), IsChecked = selected.Contains(optionId) };
+                        string optionId = J.S(option, "id"), optionText = J.S(option, "text");
+                        var check = new CheckBox { Content = Text(optionText), IsChecked = selected.Contains(optionId) };
+                        AutomationProperties.SetName(check, optionText);
                         boxes.Add((optionId, check)); panel.Children.Add(check); editorControls.Add(check);
                         check.Click += async (_, _) =>
                         {
@@ -180,11 +182,22 @@ public sealed partial class MainWindow
                 }
             }
         }
-        var update = new Action(() => { UpdateDraftFeedback(feedback); foreach (var control in editorControls) control.IsEnabled = J.B(backend.State, "draftEditable"); });
-        refreshers.Add(update); update();
-        panel.Children.Add(feedback);
         panel.Children.Add(Row(Button("复制副本", async () => await Call("exportDraftCopy", true)), Button("导出副本…", () => FileAction("exportDraftCopy", [false], true, "txt", "draft-copy"))));
-        var dialog = Dialog("人工编辑副本 · 仅本地", Scroll(panel)); dialog.PrimaryButtonText = "保存本机副本";
+        var content = new Grid { RowSpacing = 8 };
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.Children.Add(Scroll(panel));
+        content.Children.Add(feedback);
+        Grid.SetRow(feedback, 1);
+        var dialog = Dialog("编辑本机副本", content);
+        dialog.PrimaryButtonText = "保存本机副本";
+        void Update()
+        {
+            if (dialog.SecondaryButtonText.Length == 0) UpdateDraftFeedback(feedback);
+            foreach (var control in editorControls) control.IsEnabled = J.B(backend.State, "draftEditable");
+        }
+        refreshers.Add(Update);
+        Update();
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true;
@@ -192,27 +205,28 @@ public sealed partial class MainWindow
             var savingEdits = edits;
             try
             {
+                dialog.SecondaryButtonText = "";
                 if (await SaveDraftFromEditor(feedback)) savedEdits = Math.Max(savedEdits, savingEdits);
             }
             finally { deferral.Complete(); }
         };
-        bool discard = false;
-        dialog.CloseButtonClick += (_, args) =>
+        dialog.Closing += (_, args) =>
         {
-            if (HasUnsavedEdits() && !discard)
-            {
-                args.Cancel = true; feedback.Message = "尚有未保存修改。请先保存，或点击下方「放弃本次修改」。";
-                if (!panel.Children.OfType<Button>().Any()) panel.Children.Add(Button("放弃本次修改", () => { discard = true; dialog.Hide(); return Task.CompletedTask; }));
-            }
+            if (!HasUnsavedEdits() || args.Result == ContentDialogResult.Secondary) return;
+            args.Cancel = true;
+            feedback.Severity = InfoBarSeverity.Warning;
+            feedback.Message = "放弃本次修改后，未保存的内容将丢失。";
+            feedback.IsOpen = true;
+            dialog.SecondaryButtonText = "放弃本次修改";
         };
-        dialog.Closing += (_, args) => { if (HasUnsavedEdits() && !discard) { args.Cancel = true; feedback.Message = "尚有未保存修改。请先保存，或点击「关闭」选择放弃修改。"; } };
-        try { await ShowModal(dialog); } finally { refreshers.Remove(update); }
+        try { await ShowModal(dialog); } finally { refreshers.Remove(Update); }
     }
 
     private void UpdateDraftFeedback(InfoBar feedback)
     {
         var scoped = backend.State["uiFeedback"]?["draft"];
         feedback.Message = J.S(scoped, "message", J.S(backend.State, "draftFeedback"));
+        feedback.IsOpen = feedback.Message.Length > 0;
         feedback.Severity = J.S(scoped, "tone", J.S(backend.State, "draftFeedbackTone")) switch
         {
             "danger" => InfoBarSeverity.Error,
@@ -230,6 +244,7 @@ public sealed partial class MainWindow
         {
             feedback.Message = J.S(Summary, "message", "保存失败，请检查磁盘空间与副本版本后重试。");
             feedback.Severity = InfoBarSeverity.Error;
+            feedback.IsOpen = true;
         }
         return saved;
     }

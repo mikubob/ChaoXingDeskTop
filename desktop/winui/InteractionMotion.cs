@@ -56,13 +56,19 @@ public sealed partial class MainWindow
         button.RenderTransform = scale;
         button.RenderTransformOrigin = new Windows.Foundation.Point(.5, .5);
         Storyboard? active = null;
-        bool hover = false, pressed = false;
+        bool pressed = false;
         void SetScale(double target)
         {
             double x = scale.ScaleX, y = scale.ScaleY;
             active?.Stop();
+            active = null;
+            if (!motionSettings.AnimationsEnabled)
+            {
+                scale.ScaleX = scale.ScaleY = 1;
+                return;
+            }
             scale.ScaleX = scale.ScaleY = target;
-            if (!motionSettings.AnimationsEnabled) return;
+            if (x == target && y == target) return;
             var storyboard = new Storyboard();
             Animate(storyboard, scale, "ScaleX", x, target, 140);
             Animate(storyboard, scale, "ScaleY", y, target, 140);
@@ -70,16 +76,16 @@ public sealed partial class MainWindow
             storyboard.Completed += (_, _) => { if (active == storyboard) { storyboard.Stop(); active = null; } };
             storyboard.Begin();
         }
-        button.PointerEntered += (_, _) => { hover = true; if (!pressed && button.IsEnabled) SetScale(1); };
-        button.PointerExited += (_, _) => { hover = false; if (!pressed) SetScale(1); };
+        button.PointerEntered += (_, _) => { if (!pressed && button.IsEnabled) SetScale(1); };
+        button.PointerExited += (_, _) => { if (!pressed) SetScale(1); };
         button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => { if (button.IsEnabled) { pressed = true; SetScale(.975); } }), true);
         button.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, _) => { pressed = false; SetScale(1); }), true);
         button.PointerCaptureLost += (_, _) => { pressed = false; SetScale(1); };
-        button.PointerCanceled += (_, _) => { pressed = false; hover = false; SetScale(1); };
+        button.PointerCanceled += (_, _) => { pressed = false; SetScale(1); };
         button.KeyDown += (_, args) => { if (args.Key is Windows.System.VirtualKey.Space or Windows.System.VirtualKey.Enter) { pressed = true; SetScale(.975); } };
         button.KeyUp += (_, args) => { if (args.Key is Windows.System.VirtualKey.Space or Windows.System.VirtualKey.Enter) { pressed = false; SetScale(1); } };
         button.LostFocus += (_, _) => { pressed = false; SetScale(1); };
-        button.IsEnabledChanged += (_, _) => { if (!button.IsEnabled) { hover = pressed = false; SetScale(1); } };
-        button.Unloaded += (_, _) => { active?.Stop(); active = null; scale.ScaleX = scale.ScaleY = 1; hover = pressed = false; };
+        button.IsEnabledChanged += (_, _) => { if (!button.IsEnabled) { pressed = false; SetScale(1); } };
+        button.Unloaded += (_, _) => { active?.Stop(); active = null; scale.ScaleX = scale.ScaleY = 1; pressed = false; };
     }
 }

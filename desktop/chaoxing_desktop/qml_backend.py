@@ -1024,11 +1024,14 @@ class Backend(QObject):
         self.execute(run)
 
     @Slot()
-    def removeAccount(self):
+    @Slot(str)
+    def removeAccount(self, expected_account=''):
         if self.busy:
             return
         def run():
             store = self.require_account_store()
+            if expected_account and store.active != expected_account:
+                raise ValueError('当前账号已切换，请重新确认要删除的账号。')
             store.remove(store.active)
             self.config['common'].update(username='', password='', use_cookies='false')
             self.reset_account_view()

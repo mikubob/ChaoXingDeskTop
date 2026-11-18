@@ -144,6 +144,5 @@ public sealed partial class MainWindow
         int index = Navigation.SelectedIndex;
         if (index < 0) return;
         PageTitle.Text = index == 0 ? (showingMyCourses ? "我的课程" : "账号连接") : Titles[index];
-        PageDescription.Text = index == 0 ? (showingMyCourses ? "选择课程，按当前策略开启学习任务。" : "连接学习账号，登录并读取后进入我的课程。") : Descriptions[index];
     }
 }

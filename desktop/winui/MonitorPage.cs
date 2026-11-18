@@ -47,9 +47,8 @@ public sealed partial class MainWindow
         var grid = new Grid { RowSpacing = 12 };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var statGrid = new Grid { ColumnSpacing = 14 };
-        string[] labels = ["本轮章节", "已核验章节", "待完成 / 未核验章节", "失败章节"];
+        string[] labels = ["本轮章节", "平台已确认完成", "待完成／未核验", "失败章节"];
         string[] keys = ["total", "success", "pending", "failed"];
         string[] colors = ["AccentBrush", "SuccessBrush", "WarningBrush", "ErrorBrush"];
         for (int i = 0; i < keys.Length; i++)
@@ -65,8 +64,6 @@ public sealed partial class MainWindow
             Grid.SetColumn(card, i);
             refreshers.Add(() => value.Text = J.S(Summary, key, "0"));
         }
-        // The backend already tracks these numbers; the native page used to
-        // drop them, so show exactly what the QML page showed.
         aiUsageText = Text("", 12, true);
         aiUsageText.Name = "AiUsageText";
         aiWarningText = Text("", 12);
@@ -94,12 +91,21 @@ public sealed partial class MainWindow
                 (int)Math.Round(J.I(progress, "elapsed_ms") / 1000.0) + " 秒";
             verificationText.Visibility = verificationText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         });
-        var header = Column(statGrid,
-            Text("按章节统计，同一章节可含多个任务点；处理进度 100% 表示本轮结束，待完成 / 未核验章节请在平台确认。", 12, true),
-            aiUsageText, aiWarningText, verificationText);
+        var header = Column(statGrid, aiUsageText, aiWarningText, verificationText);
         var taskList = ResultList("tasks", "TaskTemplate");
+        var taskArea = ResultsArea("tasks", taskList, "暂无章节任务。请在「我的课程」选择课程并开始任务。");
+        var progressLabel = Text("本轮处理进度 0%", 12);
+        progressLabel.Name = "TaskProgressLabel";
         var progress = new ProgressBar { Height = 6 };
-        refreshers.Add(() => progress.Value = J.I(Summary, "progress"));
+        AutomationProperties.SetName(progress, "本轮处理进度");
+        refreshers.Add(() =>
+        {
+            int percent = J.I(Summary, "progress");
+            progress.Value = percent;
+            progressLabel.Text = $"本轮处理进度 {percent}%";
+        });
+        var taskProgress = Column(progressLabel, progress);
+        taskProgress.Spacing = 6;
         var tasks = new Grid { RowSpacing = 12 };
         tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -122,7 +128,6 @@ public sealed partial class MainWindow
             Button("人工副本", () => { EnqueueDialog(ShowSavedDrafts); return Task.CompletedTask; }));
         var resume = Button("继续上次任务", ResumeLastRunAsync);
         resume.Name = "ResumeButton";
-        AutomationProperties.SetName(resume, "继续上次任务");
         var resumeHint = Text("", 12, true);
         resumeHint.Name = "ResumeHint";
         var resumeCard = new Border
@@ -132,7 +137,7 @@ public sealed partial class MainWindow
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(14),
-            Child = Column(Text("继续上次任务", 15), resumeHint, resume),
+            Child = Column(resumeHint, resume),
         };
         resumeCard.Name = "ResumeCard";
         refreshers.Add(() =>
@@ -172,15 +177,28 @@ public sealed partial class MainWindow
         resumeRow.Children.Add(resumeCard);
         tasks.Children.Add(tools);
         tasks.Children.Add(resumeRow);
-        tasks.Children.Add(progress);
+        tasks.Children.Add(taskProgress);
         Grid.SetRow(resumeRow, 1);
-        Grid.SetRow(progress, 2);
-        tasks.Children.Add(taskList);
-        Grid.SetRow(taskList, 3);
+        Grid.SetRow(taskProgress, 2);
+        tasks.Children.Add(taskArea);
+        Grid.SetRow(taskArea, 3);
         var tabs = Tabs(("章节任务", tasks), ("逐题结果", FilteredResults("questions")),
             ("讨论记录", FilteredResults("discussions")), ("投票／问卷", FilteredResults("activities")),
-            ("需处理", FilteredResults("attention")));
-        if (tabs.Children.Count > 0 && tabs.Children[0] is Pivot pivot) resultTabs = pivot;
+            ("需处理", FilteredResults("attention")), ("运行日志", BuildLogs()));
+        resultTabs = (Pivot)tabs.Children[0];
+        resultTabs.SelectionChanged += (_, _) =>
+        {
+            if (followLogs && resultTabs.SelectedIndex == resultTabs.Items.Count - 1)
+                DispatcherQueue.TryEnqueue(ScrollLogsToEnd);
+        };
+        grid.Children.Add(header);
+        grid.Children.Add(tabs);
+        Grid.SetRow(tabs, 1);
+        return grid;
+    }
+
+    private UIElement BuildLogs()
+    {
         var logSearch = new TextBox { PlaceholderText = "搜索当前保留日志", Width = 250 };
         AutomationProperties.SetName(logSearch, "搜索当前保留日志");
         var level = new ComboBox { ItemsSource = new[] { "全部级别", "警告及错误", "仅错误" }, SelectedIndex = 0, Width = 145 };
@@ -203,38 +221,34 @@ public sealed partial class MainWindow
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
         logList.Name = "LogList";
-        logList.Loaded += (_, _) =>
+        logList.SizeChanged += (_, _) =>
         {
-            logScroller ??= VisualChild<ScrollViewer>(logList);
-            if (logScroller != null) logScroller.ViewChanged += LogScrolled;
+            if (followLogs) DispatcherQueue.TryEnqueue(ScrollLogsToEnd);
         };
         logEmpty = Text("暂无日志。离线演示和真实任务的记录将在这里显示。", 12, true);
         logEmpty.Name = "LogEmpty";
         logEmpty.Margin = new Thickness(4);
-        var logArea = new Grid { Height = 200 };
+        var logArea = new Grid();
         logArea.Children.Add(logList);
         logArea.Children.Add(logEmpty);
-        var logPanel = new Expander
-        {
-            Header = "运行日志",
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Content = Column(Row(logSearch, level, logFollow, bottom), logArea,
-                Row(Button("清空显示", async () => await Call("clearLogs")),
-                    Button("删除日志记录…", async () =>
-                    {
-                        if (await Confirm("删除日志记录？", "将删除当前日志目录内的应用日志文件并清空显示。", "删除日志记录"))
-                            await Call("deleteLogs");
-                    }),
-                    Button("导出保留日志", () => FileAction("fileAction", ["export_logs"], true, "log", "chaoxing-desktop")),
-                    Button("容量…", async () => await ShowText("显示与写盘容量", J.S(backend.State, "capacityInfo"))))),
-        };
-        grid.Children.Add(header);
-        grid.Children.Add(tabs);
-        Grid.SetRow(tabs, 1);
-        grid.Children.Add(logPanel);
-        Grid.SetRow(logPanel, 2);
-        return grid;
+        var actions = Row(Button("清空显示", async () => await Call("clearLogs")),
+            Button("删除日志记录…", async () =>
+            {
+                if (await Confirm("删除日志记录？", "将删除当前日志目录内的应用日志文件并清空显示。", "删除日志记录"))
+                    await Call("deleteLogs");
+            }),
+            Button("导出保留日志", () => FileAction("fileAction", ["export_logs"], true, "log", "chaoxing-desktop")),
+            Button("容量…", async () => await ShowText("显示与写盘容量", J.S(backend.State, "capacityInfo"))));
+        var logPanel = new Grid { RowSpacing = 10 };
+        logPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        logPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        logPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        logPanel.Children.Add(Row(logSearch, level, logFollow, bottom));
+        logPanel.Children.Add(logArea);
+        logPanel.Children.Add(actions);
+        Grid.SetRow(logArea, 1);
+        Grid.SetRow(actions, 2);
+        return logPanel;
     }
 
     private ListView ResultList(string name, string template = "RecordTemplate")
@@ -343,10 +357,22 @@ public sealed partial class MainWindow
         grid.Children.Add(tools);
         grid.Children.Add(stats);
         Grid.SetRow(stats, 1);
-        grid.Children.Add(list);
-        Grid.SetRow(list, 2);
+        var resultArea = ResultsArea(name, list, "当前筛选下没有记录。");
+        grid.Children.Add(resultArea);
+        Grid.SetRow(resultArea, 2);
         resultFilters[name] = filter;
         return grid;
+    }
+
+    private Grid ResultsArea(string name, ListView list, string emptyMessage)
+    {
+        var empty = Text(emptyMessage, 13, true);
+        empty.HorizontalAlignment = HorizontalAlignment.Center;
+        empty.VerticalAlignment = VerticalAlignment.Center;
+        empty.IsHitTestVisible = false;
+        refreshers.Add(() => empty.Visibility = backend.State[name] is JsonArray { Count: > 0 }
+            ? Visibility.Collapsed : Visibility.Visible);
+        return new Grid { Children = { list, empty } };
     }
 
     private string ResultStatsText(string name)
@@ -516,9 +542,14 @@ public sealed partial class MainWindow
     }
     private void ScrollLogsToEnd()
     {
-        if (logList == null) return;
-        logScroller ??= VisualChild<ScrollViewer>(logList);
-        if (logScroller == null) return;
+        if (logList == null || resultTabs == null || resultTabs.SelectedIndex != resultTabs.Items.Count - 1 ||
+            logList.ActualHeight <= 0) return;
+        if (logScroller == null)
+        {
+            logScroller = FindLogScroller(logList);
+            if (logScroller == null) return;
+            logScroller.ViewChanged += LogScrolled;
+        }
         logScrollTicks = Environment.TickCount64;
         logList.UpdateLayout();
         lastLogOffset = logScroller.ScrollableHeight;
@@ -533,6 +564,16 @@ public sealed partial class MainWindow
             lastLogOffset = logScroller.ScrollableHeight;
             logScroller.ChangeView(null, logScroller.ScrollableHeight, null, true);
         });
+    }
+    private static ScrollViewer? FindLogScroller(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is ScrollViewer scroller) return scroller;
+            if (FindLogScroller(child) is { } nested) return nested;
+        }
+        return null;
     }
     private void LogScrolled(object? sender, ScrollViewerViewChangedEventArgs e)
     {
@@ -734,23 +775,61 @@ public sealed partial class MainWindow
 
     private async Task ShowProfiles()
     {
-        var items = J.A(await Call("listAiProfiles")).ToList();
-        var name = new TextBox { Text = "默认档案", PlaceholderText = "档案名称", MaxLength = 40 };
-        var select = new ComboBox { ItemsSource = items.Select(n => new ChoiceItem(J.S(n, "name"), J.S(n, "id"))).ToArray(), DisplayMemberPath = "Label", SelectedIndex = items.Count > 0 ? 0 : -1 };
-        var notice = new InfoBar { IsOpen = true, IsClosable = false, Message = "档案包含当前服务配置与凭据，在本机加密保存。" };
-        async Task Reload() { items = J.A(await Call("listAiProfiles")).ToList(); select.ItemsSource = items.Select(n => new ChoiceItem(J.S(n, "name"), J.S(n, "id"))).ToArray(); select.SelectedIndex = items.Count > 0 ? 0 : -1; }
-        var dialog = Dialog("命名 AI 档案（本机加密）", Column(notice, name, select));
-        dialog.PrimaryButtonText = "保存当前设置"; dialog.SecondaryButtonText = "切换所选档案";
-        dialog.PrimaryButtonClick += async (_, args) => { args.Cancel = true; var deferral = args.GetDeferral(); try { bool ok = (await Call("aiProfileAction", "save", name.Text))?.ToString() == "true"; notice.Message = ok ? "档案已保存。" : J.S(Summary, "message", "保存失败，请检查名称和设置。"); await Reload(); } finally { deferral.Complete(); } };
-        dialog.SecondaryButtonClick += async (_, args) => { args.Cancel = true; if (select.SelectedItem is ChoiceItem item) { await Call("aiProfileAction", "load", item.Value); notice.Message = "请检查当前加载的配置。"; } };
+        var items = J.A(await Call("listAiProfiles"));
+        var name = new TextBox { Text = "默认档案", Header = "档案名称（必填，最多 40 字符）", MaxLength = 40 };
+        var select = new ComboBox { Header = "已保存的档案", PlaceholderText = "暂无档案", DisplayMemberPath = "Label" };
+        var notice = new InfoBar { IsOpen = false, IsClosable = false };
+        var panel = Column(Text("档案包含服务配置与凭据，保存在本机并加密。", 12, true), name, select, notice);
+        var dialog = Dialog("AI 档案", Scroll(panel));
+        dialog.PrimaryButtonText = "保存为档案";
+        dialog.SecondaryButtonText = "加载所选档案";
         var delete = Button("删除所选档案…", async () =>
         {
             if (select.SelectedItem is not ChoiceItem item) return;
-            // Hide the parent before showing another ContentDialog.
-            dialog.Hide(); currentDialog = null;
-            if (await Confirm("删除 AI 档案？", "将删除「" + item.Label + "」的本机加密档案，无法撤销。", "删除此档案")) await Call("aiProfileAction", "delete", item.Value);
+            dialog.Hide();
+            if (await Confirm("删除 AI 档案？", "将删除「" + item.Label + "」的本机加密档案，无法撤销。", "删除此档案"))
+                await Call("aiProfileAction", "delete", item.Value);
         });
-        ((StackPanel)dialog.Content).Children.Add(delete);
+        panel.Children.Add(delete);
+        void Report(bool ok, string message)
+        {
+            notice.Message = ok ? message : J.S(backend.State["uiFeedback"]?["profiles"], "message", message);
+            notice.Severity = ok ? InfoBarSeverity.Success : InfoBarSeverity.Error;
+            notice.IsOpen = true;
+        }
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
+            {
+                bool ok = (await Call("aiProfileAction", "save", name.Text))?.ToString() == "true";
+                Report(ok, ok ? "档案已保存。" : "保存档案失败，请检查名称和 AI 设置。");
+                if (ok) LoadChoices(J.A(await Call("listAiProfiles")));
+            }
+            finally { deferral.Complete(); }
+        };
+        dialog.SecondaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            if (select.SelectedItem is not ChoiceItem item) return;
+            var deferral = args.GetDeferral();
+            try
+            {
+                bool ok = (await Call("aiProfileAction", "load", item.Value))?.ToString() == "true";
+                Report(ok, ok ? $"已加载「{item.Label}」的 AI 设置。" : $"无法加载「{item.Label}」的 AI 设置。");
+            }
+            finally { deferral.Complete(); }
+        };
+        void LoadChoices(IEnumerable<JsonNode> rows)
+        {
+            var choices = rows.Select(n => new ChoiceItem(J.S(n, "name"), J.S(n, "id"))).ToArray();
+            select.ItemsSource = choices;
+            select.SelectedIndex = choices.Length > 0 ? 0 : -1;
+            dialog.IsSecondaryButtonEnabled = delete.IsEnabled = choices.Length > 0;
+        }
+        name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text);
+        LoadChoices(items);
         await ShowModal(dialog);
     }
 
@@ -773,7 +852,7 @@ public sealed partial class MainWindow
         {
             var id = J.S(row, "id");
             panel.Children.Add(Card(Column(Text(J.S(row, "title", id)), Row(Button("打开副本", async () => { currentDialog?.Hide(); await Call("openSavedDraft", id); }),
-                Button("删除副本…", async () => { currentDialog?.Hide(); currentDialog = null; if (await Confirm("删除人工副本？", "只删除独立的本机副本，无法撤销。", "删除此副本")) await Call("deleteSavedDraft", id, J.I(row, "version")); })))));
+                Button("删除副本…", async () => { currentDialog?.Hide(); currentDialog = null; if (await Confirm("删除人工副本？", "将删除本机副本「" + J.S(row, "title", id) + "」，无法撤销。", "删除此副本")) await Call("deleteSavedDraft", id, J.I(row, "version")); })))));
         }
         if (rows.Count == 0) panel.Children.Add(Text("暂无人工副本。请从讨论或活动详情打开「编辑本地副本」。"));
         var dialog = Dialog("已保存人工副本", Scroll(panel)); await ShowModal(dialog);

@@ -2,21 +2,21 @@
 
 面向 Windows 的超星课程学习工作台，用一个桌面窗口管理账号、课程、章节任务、题库与 AI 服务，以及逐题结果和日志。
 
-**当前版本：0.6.0** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
+**当前版本：0.6.1** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
 
 源码默认界面为原生 **WinUI 3（C# / Windows App SDK）**，保留五页侧栏、账号面板、课程列表、设置分组及任务／日志区布局。账号、配置、凭据保护和任务协议继续使用原 Python 后台；Qt Core 保留用于后台进程和模型，不创建 QML 界面。旧 QML 界面仅作为归档参考实现保留，需显式使用 `--legacy-qml` 启动，不随发行版提供，也不参与安装包验收。
 
 开发运行：准备 Python 环境及 .NET 8 SDK，然后在 `desktop` 中运行 `./scripts/build-winui.ps1`、`.venv/Scripts/python.exe run.py`。详见 [WinUI 3 运行与构建](desktop/winui/README.md)。
 
-[下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.0/ChaoxingDesktop-0.6.0-Setup-win-x64.exe) · [发行说明](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.0) · [使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
+[下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.1/ChaoxingDesktop-0.6.1-Setup-win-x64.exe) · [发行说明](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.1) · [使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
 
 ## 下载与安装
 
 | 文件 | 用途 |
 | --- | --- |
-| [Windows x64 安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.0/ChaoxingDesktop-0.6.0-Setup-win-x64.exe) | 日常使用，已包含 Python 运行环境 |
-| [对应版本源码](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.0/ChaoxingDesktop-0.6.0-source.zip) | 查看实现、自行运行或构建 |
-| [SHA256 校验清单](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.0/ChaoxingDesktop-0.6.0-installer-SHA256.json) | 核对安装包及源码 ZIP 的完整性 |
+| [Windows x64 安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.1/ChaoxingDesktop-0.6.1-Setup-win-x64.exe) | 日常使用，已包含 Python 运行环境 |
+| [对应版本源码](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.1/ChaoxingDesktop-0.6.1-source.zip) | 查看实现、自行运行或构建 |
+| [SHA256 校验清单](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.1/ChaoxingDesktop-0.6.1-installer-SHA256.json) | 核对安装包及源码 ZIP 的完整性 |
 
 下载并运行安装包，按提示完成安装后，从桌面或开始菜单打开「超星桌面版」。首次使用可以直接选择「离线演示」，体验界面和任务流程。
 
@@ -39,7 +39,7 @@
 
 ## 开始使用
 
-1. **连接账号**：在「课程与账号」点击「浏览器登录」，在弹出的 Edge / Chrome 完成扫码或网页登录，程序会自动获取 Cookie 并读取课程；也可手动导入 Cookie。
+1. **连接账号**：在「课程与账号」点击「浏览器登录并读取课程」，在弹出的 Edge / Chrome 完成扫码或网页登录，程序会自动获取 Cookie 并读取课程；也可手动导入 Cookie。
 2. **选择课程**：勾选需要处理的课程，在「学习设置」调整倍速、并发和章节策略。
 3. **配置服务**：在「题库与 AI」启用所需服务，填写凭据、查询顺序及超时等参数。
 4. **启动任务**：点击「开始所选课程」，在「任务与日志」查看章节进度、媒体状态和逐题结果。
@@ -86,17 +86,18 @@
 
 ## 从源码运行
 
-开发与构建环境为 **Windows x64、Python 3.13.9**。在 PowerShell 中执行：
+开发与构建需要 Windows x64、Python 3.13.9 和 .NET 8 SDK。在 PowerShell 中执行：
 
 ```powershell
 git clone https://github.com/mikubob/ChaoXingDeskTop.git
 cd ChaoXingDeskTop/desktop
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
+./scripts/build-winui.ps1
 .venv/Scripts/python.exe run.py
 ```
 
-测试环境准备、构建安装包和发布校验流程见 [开发与构建指南](desktop/README.md#测试)。
+构建环境、安装包生成与发布校验流程见 [开发与构建指南](desktop/README.md#构建与发布)。
 
 ## 项目结构
 
@@ -104,14 +105,13 @@ python -m venv .venv
 desktop/
 ├── chaoxing_desktop/       # 界面、账号、配置、调度与答案处理
 ├── vendor/chaoxing/        # 平台协议适配与字体资源
-├── tests/                 # 单元、界面、性能与安装验收
 ├── scripts/               # 依赖锁定、构建与发布工具
 ├── assets/                # 应用图标与界面资源
 └── run.py                 # 主程序与后台进程入口
-.github/workflows/         # Windows 离线回归检查
+.github/workflows/         # Windows 构建与离线验收
 ```
 
-公共仓库与源码 ZIP 使用明确的文件清单，仅包含运行、测试、构建所需源码、资源、说明及许可。历史计划、截图、验收材料、用户数据与本地构建产物不进入发布内容。
+源码 ZIP 按文件清单收录运行和构建所需的源码、资源、说明及许可。历史计划、截图、验收材料、用户数据与本地构建产物不进入发布内容。
 
 ## 来源与许可
 

@@ -32,8 +32,8 @@ SCHEMA = {
               hint="关闭时仅保存本地草稿。与测验自动提交分别控制；发布未知时不重复提交。"),
     ])],
     "learning": [
-        group("学习与任务调度", "调整本轮学习节奏，设置用于下一次任务。", [
-            field("视频倍速", "common", "speed", "number", 1, 2, hint="1–2 倍"),
+        group("学习与任务调度", "设置在下一次启动任务时生效。", [
+            field("视频倍速", "common", "speed", "number", 1, 2),
             field("同时处理的章节数", "common", "jobs", "integer", 1, 16),
             field("未开放章节", "common", "notopen_action", "choice", choices=[("重试（最多 5 轮）", "retry"), ("询问后跳过或停止", "ask"), ("直接跳过", "continue")]),
             field("重试间隔 / 秒", "common", "retry_interval", "number", .1, 3600,
@@ -76,7 +76,7 @@ SCHEMA = {
         field("Telegram Chat ID", "notification", "tg_chat_id", "secret"),
     ])],
     "advanced": [
-        group("请求间隔与恢复", "网络参数用于后续任务；填写代理不会自动启用 AI。", [
+        group("请求间隔与恢复", "", [
             field("题库查询间隔 / 秒", "tiku", "delay", "number", 0, 3600),
             field("AI 请求间隔 / 秒", "ai", "min_interval_seconds", "number", 0, 3600),
             field("AI 请求超时 / 秒", "ai", "timeout", "integer", 5, 300),
@@ -121,7 +121,7 @@ for key, title, prefix, existing in [('bank_go', 'GO 题库', 'go', go['fields']
     if prefix in ('yanxi', 'adapter'):
         fields.append(field('失败重试次数', 'question_bank', prefix + '_retries', 'integer', 0, 5,
                             hint='仅重试网络异常、HTTP 429 和 5xx；0 表示只请求一次。'))
-    SCHEMA[key] = [group(title, '该题库独立使用以下参数。', fields + existing)]
+    SCHEMA[key] = [group(title, '', fields + existing)]
 SCHEMA['advanced'].append(group('日志保存', '自动保存已脱敏日志；留空时使用本机数据目录下的 logs 文件夹。', [
     field('日志保存目录', 'logging', 'directory', 'directory', hint='留空使用默认目录'),
 ]))

@@ -1,7 +1,11 @@
 """Shared public-distribution boundary for portable and installed releases."""
+import argparse
+import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import tempfile
 
 
 def validate_app_tree(root):
@@ -28,3 +32,28 @@ def validate_app_tree(root):
                 raise ValueError(f'Private or temporary file in application: {relative}')
             files.append(path)
     return sorted(files)
+
+
+def verify_worker(root):
+    environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QSG_RHI_BACKEND='software')
+    # 排除开发机 Python 和虚拟环境，确认安装载荷能够独立运行。
+    environment['PATH'] = os.path.join(environment.get('WINDIR', 'C:/Windows'), 'System32')
+    with tempfile.TemporaryDirectory(prefix='chaoxing-worker-') as data:
+        command = json.dumps(dict(action='probe', config={}, data_dir=data))
+        probe = subprocess.run([str(root / 'ChaoxingWorker.exe'), '--worker'], input=command,
+                               capture_output=True, encoding='utf-8', timeout=30, env=environment)
+    if probe.returncode != 0 or not probe.stdout.strip():
+        raise RuntimeError('冻结后台探针运行失败。')
+    result = json.loads(probe.stdout.splitlines()[-1])
+    checks = ('captcha_ready', 'review_policy_ready', 'matching_ready', 'ocs_ready',
+              'discussion_ready', 'activity_ready')
+    if (result.get('type') != 'probe' or result.get('bank_protocol') != 'v2-text-and-images'
+            or not all(result.get(check) is True for check in checks)):
+        raise RuntimeError('冻结后台探针未通过资源与协议自检。')
+    print('冻结后台探针通过，已核验题库、图片编码、OCR、讨论和活动模块。')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='验收冻结后的 Windows 后台程序')
+    parser.add_argument('app', type=Path)
+    verify_worker(parser.parse_args().app.resolve())

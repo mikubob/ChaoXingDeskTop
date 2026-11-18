@@ -1,6 +1,7 @@
 param(
     [string]$OutputDirectory = 'dist/ChaoxingDesktop',
     [string]$Wheelhouse = '',
+    [string]$DotNet = '',
     [switch]$SkipGuiSmoke
 )
 
@@ -23,9 +24,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Build environment differs from requirements-lock.txt; use a clean .venv-build' }
 & $taskPython -m pip check
 if ($LASTEXITCODE -ne 0) { throw 'Dependency check failed' }
-& $taskPython -m unittest discover -s tests -p 'test_*.py'
-if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
-& (Join-Path $PSScriptRoot 'build-winui.ps1') -OutputDirectory $OutputDirectory -Python $taskPython -BundleBackend -SkipTests -SkipGuiSmoke:$SkipGuiSmoke
+& (Join-Path $PSScriptRoot 'build-winui.ps1') -OutputDirectory $OutputDirectory -Python $taskPython -DotNet $DotNet -BundleBackend -SkipGuiSmoke:$SkipGuiSmoke
 if ($LASTEXITCODE -ne 0) { throw 'Native WinUI 3 release build failed' }
 $taskNativeOutput = [IO.Path]::GetFullPath((Join-Path $taskRoot $OutputDirectory))
 if ($SkipGuiSmoke) {

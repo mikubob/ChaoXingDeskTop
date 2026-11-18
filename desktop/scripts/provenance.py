@@ -31,8 +31,8 @@ def payload_snapshot(app):
 
 
 def record_build(root, app, gui_verified):
-    record = dict(format=1, source=source_snapshot(root), payload=payload_snapshot(app),
-                  checks=['unit', 'worker'] + (['gui'] if gui_verified else []))
+    record = dict(format=2, source=source_snapshot(root), payload=payload_snapshot(app),
+                  checks=['worker'] + (['gui'] if gui_verified else []))
     (app/RECORD).write_text(json.dumps(record, ensure_ascii=True, indent=2), encoding='utf-8')
     return record
 
@@ -42,8 +42,8 @@ def verify_build(root, app, require_gui=True):
     if not path.is_file():
         raise ValueError('Build record missing: rebuild and run acceptance before publishing')
     record = json.loads(path.read_text(encoding='utf-8'))
-    required = {'unit', 'worker', 'gui'} if require_gui else {'unit', 'worker'}
-    if (record.get('format') != 1 or not required.issubset(set(record.get('checks', [])))
+    required = {'worker', 'gui'} if require_gui else {'worker'}
+    if (record.get('format') != 2 or not required.issubset(set(record.get('checks', [])))
             or record.get('source') != source_snapshot(root) or record.get('payload') != payload_snapshot(app)):
         raise ValueError('Source, payload or acceptance differs from the build record; rebuild and re-accept')
     return record

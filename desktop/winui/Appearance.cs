@@ -40,7 +40,7 @@ public sealed partial class MainWindow
 
     private void InitializeAppearance()
     {
-        string folder = smokeDestination != null ? smokeDestination :
+        string folder = releaseCheckDirectory ??
             Environment.GetEnvironmentVariable("CHAOXING_DESKTOP_DATA") ??
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChaoxingDesktop");
         appearancePath = Path.Combine(folder, "appearance.json");

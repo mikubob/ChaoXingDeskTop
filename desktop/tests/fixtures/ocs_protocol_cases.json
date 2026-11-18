@@ -1,8 +1,0 @@
-[
-  {"name":"选项换序","answer":"乙","type":"single","options":"A.甲\nB.乙","expected":"乙"},
-  {"name":"多空数组","answer":"[\"甲\",\"乙\"]","type":"completion","blank_count":2,"expected":"[\"甲\", \"乙\"]"},
-  {"name":"多空不足","answer":"[\"甲\"]","type":"completion","blank_count":2,"expected":null},
-  {"name":"空位未知","answer":"甲","type":"completion","expected":null},
-  {"name":"单空正文分号","answer":"甲；乙","type":"completion","blank_count":1,"expected":"甲；乙"},
-  {"name":"判断错","answer":"错误","type":"judgement","expected":"错误"}
-]

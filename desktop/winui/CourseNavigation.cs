@@ -41,8 +41,8 @@ public sealed partial class MainWindow
         if (coursesLoadedPending && !Busy)
         {
             coursesLoadedPending = false;
-            Navigation.SelectedIndex = 0;
-            ShowCourseView(true);
+            // 读课期间可以继续使用其他页面。课程准备好后保留用户当前的导航选择。
+            ShowCourseView(true, animate: Navigation.SelectedIndex == 0);
         }
     }
 }

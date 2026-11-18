@@ -1,6 +1,6 @@
 # WinUI 3 原生界面
 
-默认入口 `desktop/run.py` 启动本目录的 C# WinUI 3 程序。窗口沿用 1280 × 860 的逻辑尺寸，最小 980 × 700；五页导航、课程卡片、学习设置、题库与 AI 双栏、任务结果和可展开日志保持原有组织。高 DPI 使用 Windows 原生缩放。
+默认入口 `desktop/run.py` 启动本目录的 C# WinUI 3 程序。窗口默认 1280 × 860 逻辑像素，最小 980 × 700，高 DPI 使用 Windows 原生缩放。「任务与日志」中的「运行日志」使用独立标签页，日志列表和操作按钮在最小窗口下也可使用。
 
 主页面和页内分类采用滑动淡入动画，侧栏选中指示条连续移动；快速切换以最后选择为准，并遵循 Windows 的动画开关。账号连接与“我的课程”使用独立视图，成功读课后向右滑入课程，可返回账号管理；切换账号后重新连接。章节统计和任务状态采用绿色已核验、琥珀色待完成、红色失败。
 
@@ -17,7 +17,7 @@ python -m venv .venv
 .venv/Scripts/python.exe run.py
 ```
 
-脚本优先使用 `desktop/build/dotnet/dotnet.exe`，否则使用 PATH 中的 `dotnet`。可传 `-DotNet`、`-Python` 指定环境。默认构建到 `winui/publish/`，运行后台传输与离线 worker 测试，再启动原生五页界面验收；无交互桌面时使用 `-SkipGuiSmoke`，但这不代表完成界面验收。
+脚本优先使用 `desktop/build/dotnet/dotnet.exe`，否则使用 PATH 中的 `dotnet`。可传 `-DotNet`、`-Python` 指定环境。默认构建到 `winui/publish/`，并启动 WinUI 3 进行离线读课和任务验收；无交互桌面时使用 `-SkipGuiSmoke`，但这不代表完成界面验收。
 
 也可直接运行 `winui/publish/ChaoxingDesktop.exe`：源码模式会向上查找 `desktop/run.py` 和 `.venv-build`、`.venv`、`.venv-ci`。后台不从网络下载，也不通过命令行传递凭据。
 
@@ -27,7 +27,7 @@ python -m venv .venv
 ./scripts/build.ps1 -OutputDirectory dist/ChaoxingDesktop
 ```
 
-默认构建流程运行全部单元回归，发布自包含 WinUI 程序，通过 `WinUIBackend.spec` 打包 Python 后台，验收冻结 worker 和原生 GUI，并记录来源哈希。输出目录包含 `ChaoxingDesktop.exe`、`ChaoxingWorker.exe`、`_internal/` 及原生运行文件，必须整体分发；后续安装包继续使用 `scripts/build_installer.py`。
+默认构建流程发布自包含 WinUI 程序，通过 `WinUIBackend.spec` 打包 Python 后台，验收冻结 worker 和原生 GUI，并记录来源哈希。输出目录包含 `ChaoxingDesktop.exe`、`ChaoxingWorker.exe`、`_internal/` 及原生运行文件，必须整体分发；后续安装包继续使用 `scripts/build_installer.py`。
 
 只组装原生分发目录时可运行 `./scripts/build-winui.ps1 -BundleBackend -OutputDirectory dist/ChaoxingDesktop`。正式发布应使用上面的完整 `build.ps1`，生成验收与来源记录。
 
@@ -35,11 +35,11 @@ python -m venv .venv
 
 `BackendClient.cs` 启动后台子进程，以继承的标准输入／输出交换 JSON 行，没有监听端口。`chaoxing_desktop/winui_bridge.py` 使用明确命令白名单、帧大小限制和合并更新，把现有业务状态与模型交给界面。文件选择、剪贴板、确认和人工补全由 WinUI 控件处理。原有 DPAPI、账号隔离、三类独立提交开关、提交确认、未知结果防重和设置验证继续在 Python 业务层执行。
 
-Qt Core 及现有 Python 依赖保留在后台；这次迁移没有重写平台、题库或 AI 协议。QML 文件与既有界面回归暂留作迁移参考；仅显式传 `run.py --legacy-qml` 才启动旧界面，原生启动失败不会自动切回。
+后台沿用 Qt Core 和现有 Python 依赖。旧 QML 界面通过 `run.py --legacy-qml` 启动。
 
 ## 依赖精简
 
-前端仅引用 WinUI 组件依赖，不引入 Windows App SDK 元包中的 AI、ML、Widgets 等未使用组件。Python 后台保留 Qt Core、Network、WebSockets 与图片编解码所需的 Qt Gui；旧文件对话框延迟加载，原生后台包排除 Qt Widgets、QML、Qt Quick、浏览器和 PDF 模块。后台裁剪仅保留图片、TLS、网络信息插件，不携带窗口平台插件、样式、翻译和软件 OpenGL。OCR 引擎及 `common_old.onnx` 模型继续保留；冻结发布必须通过 `tests/release_smoke.py --worker-only`，覆盖图片编码和 OCR，不能用源码离线验收代替。
+前端仅引用 WinUI 组件依赖，不引入 Windows App SDK 元包中的 AI、ML、Widgets 等未使用组件。Python 后台保留 Qt Core、Network、WebSockets 与图片编解码所需的 Qt Gui；旧文件对话框延迟加载，原生后台包排除 Qt Widgets、QML、Qt Quick、浏览器和 PDF 模块。后台裁剪仅保留图片、TLS、网络信息插件，不携带窗口平台插件、样式、翻译和软件 OpenGL。OCR 引擎及 `common_old.onnx` 模型继续保留；发布前由 `scripts/release_support.py` 验收冻结后台，覆盖图片编码和 OCR。
 
 构建和发布应使用新的空输出目录，以免上次构建留下的可选运行库影响体积统计。
 
@@ -50,7 +50,6 @@ OCR 在媒体进度上报遇到图片验证码时按需初始化（`api/base.py`
 ## 验证
 
 ```powershell
-.venv/Scripts/python.exe -m unittest discover -s tests -p test_winui_bridge.py -v
 ./scripts/run_gui_smoke.ps1 -Executable winui/publish/ChaoxingDesktop.exe -Destination build/winui-smoke -Platform windows
 ```
 

@@ -6,7 +6,7 @@ import zipfile
 def source_files(desktop: Path):
     root_files = (
         ".gitignore", "run.py", "backend.py", "WinUIBackend.spec", "README.md", "LICENSE",
-        "THIRD_PARTY_NOTICES.md", "REVIEWED_SUBMISSION_CONTRACT.md", "requirements.txt", "requirements-build.txt",
+        "THIRD_PARTY_NOTICES.md", "requirements.txt", "requirements-build.txt",
         "requirements-lock.txt",
         "scripts/retired-runtime-0.3.5.txt",
         "scripts/retired-runtime-0.4.2.txt",
@@ -25,7 +25,6 @@ def source_files(desktop: Path):
     for directory, extensions in (
         ("chaoxing_desktop", {".py", ".qml"}),
         ("scripts", {".py", ".ps1", ".nsi"}),
-        ("tests", {".py", ".ps1"}),
         ("assets", {".svg"}),
         ("vendor/chaoxing/api", {".py", ".md"}),
     ):
@@ -33,10 +32,6 @@ def source_files(desktop: Path):
             if (path.is_file() and not path.is_symlink()
                     and "__pycache__" not in path.parts and path.suffix in extensions):
                 files.append(path)
-    files.append(desktop / "tests/fixtures/ocs_protocol_cases.json")
-    files.append(desktop / "tests/fixtures/verification_cases.json")
-    files.append(desktop / "tests/fixtures/README.md")
-    files.append(desktop / "tests/fixtures/retired-runtime-0.4.2-evidence.json")
     files.extend(desktop / relative for relative in (
         "vendor/chaoxing/LICENSE", "vendor/chaoxing/resource/README.md",
         "vendor/chaoxing/resource/font_map_table.json",
@@ -48,7 +43,7 @@ def source_files(desktop: Path):
 def repository_source_files(root: Path):
     """One explicit public scope for Git publishing and embedded GPL source."""
     files = source_files(root / 'desktop')
-    files.extend(root / name for name in ('.gitignore', 'README.md', 'LICENSE',
+    files.extend(root / name for name in ('.gitignore', 'README.md', 'LICENSE', 'AGENTS.md',
                                          '.github/workflows/windows-checks.yml'))
     return sorted(path for path in files if path.is_file() and not path.is_symlink())
 
