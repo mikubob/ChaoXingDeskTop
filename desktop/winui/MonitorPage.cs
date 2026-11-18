@@ -17,14 +17,12 @@ public sealed partial class MainWindow
         public ComboBox? Stages;
         public TextBlock? Scope;
         public Button? ClearScope;
-        public TextBlock? Stats;
     }
     private sealed record FilterOption(string Label, string Value);
 
     private readonly Dictionary<string, TextBlock> chapterStatValues = new();
     private readonly Dictionary<string, ResultFilter> resultFilters = new();
     private readonly ObservableCollection<LogEntry> logEntries = new();
-    private TextBlock? aiUsageText, aiWarningText, verificationText;
     private ListView? logList;
     private TextBlock? logEmpty;
     private CheckBox? logFollow;
@@ -64,34 +62,17 @@ public sealed partial class MainWindow
             Grid.SetColumn(card, i);
             refreshers.Add(() => value.Text = J.S(Summary, key, "0"));
         }
-        aiUsageText = Text("", 12, true);
-        aiUsageText.Name = "AiUsageText";
-        aiWarningText = Text("", 12);
+        var aiWarningText = Text("", 12);
         aiWarningText.Name = "AiWarningText";
         aiWarningText.Foreground = ThemeBrush("WarningBrush");
         aiWarningText.Visibility = Visibility.Collapsed;
-        verificationText = Text("", 12, true);
-        verificationText.Name = "VerificationText";
-        verificationText.Visibility = Visibility.Collapsed;
         refreshers.Add(() =>
         {
-            var usage = Summary?["aiUsage"];
-            int limit = J.I(usage, "limit");
-            aiUsageText.Text = "本次操作 AI 请求 " + J.I(usage, "requests") + " / " + (limit > 0 ? limit.ToString() : "不限") +
-                " · 服务返回 token " + J.I(usage, "tokens") + "（" + J.I(usage, "known") + " 次有 usage，" +
-                J.I(usage, "unknown") + " 次用量未知）· 不等于账单或正确率";
             string warning = J.S(Summary, "aiWarning");
             aiWarningText.Text = warning;
             aiWarningText.Visibility = warning.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-            var progress = Summary?["verificationProgress"];
-            string phase = J.S(progress, "phase");
-            verificationText.Text = phase.Length == 0 ? "" :
-                "核验已处理 " + J.I(progress, "completed") + "/" + J.I(progress, "total") + " 章 · 章节／卡片读取 " +
-                J.I(progress, "reads") + " · 失败 " + J.I(progress, "failures") + " · " +
-                (int)Math.Round(J.I(progress, "elapsed_ms") / 1000.0) + " 秒";
-            verificationText.Visibility = verificationText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         });
-        var header = Column(statGrid, aiUsageText, aiWarningText, verificationText);
+        var header = Column(statGrid, aiWarningText);
         var taskList = ResultList("tasks", "TaskTemplate");
         var taskArea = ResultsArea("tasks", taskList, "暂无章节任务。请在「我的课程」选择课程并开始任务。");
         var progressLabel = Text("本轮处理进度 0%", 12);
@@ -114,16 +95,6 @@ public sealed partial class MainWindow
         var verifyChapters = Button("核验章节", async () => await Call("verifyPending"), true);
         verifyChapters.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         ToolTipService.SetToolTip(verifyChapters, "只读检查待完成章节的平台进度");
-        var verifyRecords = Button("核验讨论与活动", async () => await Call("verifyRecords"), true);
-        var discover = new MenuFlyoutItem { Text = "全量发现核验…" };
-        discover.Click += (_, _) => EnqueueDialog(async () =>
-        {
-            if (await Confirm("全量发现核验", "将读取当前课程的全部关联任务卡和本人证据，仅用于只读核验。", "开始只读核验"))
-                await Call("verifyAllRecords");
-        });
-        var more = new DropDownButton { Content = "更多核验", Flyout = new MenuFlyout { Items = { discover } } };
-        idleControls.Add(more);
-        var verification = Row(verifyChapters, verifyRecords, more);
         var records = Row(Button("运行摘要", () => { EnqueueDialog(ShowHistory); return Task.CompletedTask; }),
             Button("人工副本", () => { EnqueueDialog(ShowSavedDrafts); return Task.CompletedTask; }));
         var resume = Button("继续上次任务", ResumeLastRunAsync);
@@ -155,30 +126,10 @@ public sealed partial class MainWindow
                 ? (scope.Length > 0 ? "原范围：" + scope + "\n" : "") + J.S(state, "reason")
                 : "";
         });
-        var tools = new Grid { ColumnSpacing = 24, RowSpacing = 10, ChildrenTransitions = LayoutTransitions() };
-        tools.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        tools.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        tools.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        tools.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        tools.Children.Add(verification);
-        tools.Children.Add(records);
-        void ArrangeTools()
-        {
-            bool narrow = tools.ActualWidth < 680;
-            Grid.SetColumnSpan(verification, narrow ? 2 : 1);
-            Grid.SetRow(records, narrow ? 1 : 0);
-            Grid.SetColumn(records, narrow ? 0 : 1);
-            Grid.SetColumnSpan(records, narrow ? 2 : 1);
-            records.HorizontalAlignment = narrow ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-        }
-        tools.SizeChanged += (_, _) => ArrangeTools();
-        ArrangeTools();
-        var resumeRow = new Grid();
-        resumeRow.Children.Add(resumeCard);
-        tasks.Children.Add(tools);
-        tasks.Children.Add(resumeRow);
+        tasks.Children.Add(StretchRow(verifyChapters, records));
+        tasks.Children.Add(resumeCard);
         tasks.Children.Add(taskProgress);
-        Grid.SetRow(resumeRow, 1);
+        Grid.SetRow(resumeCard, 1);
         Grid.SetRow(taskProgress, 2);
         tasks.Children.Add(taskArea);
         Grid.SetRow(taskArea, 3);
@@ -251,7 +202,7 @@ public sealed partial class MainWindow
         return logPanel;
     }
 
-    private ListView ResultList(string name, string template = "RecordTemplate")
+    private ListView ResultList(string name, string template)
     {
         var list = new ListView
         {
@@ -270,7 +221,7 @@ public sealed partial class MainWindow
 
     private UIElement FilteredResults(string name)
     {
-        var list = ResultList(name);
+        var list = ResultList(name, name == "questions" ? "QuestionTemplate" : "RecordTemplate");
         var filter = new ResultFilter();
         var search = new TextBox
         {
@@ -297,7 +248,7 @@ public sealed partial class MainWindow
             var pending = new CheckBox { Content = "只看待处理 / 拒绝 / 失败" };
             pending.Name = "QuestionPending";
             AutomationProperties.SetName(pending, "只看待处理 / 拒绝 / 失败");
-            var scope = Text("全部章节", 12, true);
+            var scope = Text("", 12, true);
             scope.Name = "QuestionScope";
             var clear = Button("清除章节筛选", () => { SetQuestionScope(""); return Task.CompletedTask; });
             clear.Name = "QuestionScopeClear";
@@ -348,8 +299,11 @@ public sealed partial class MainWindow
         if (name != "questions") search.TextChanged += async (_, _) => { if (!refreshing && !resettingFilters) await Filter(); };
         var stats = Text("", 12, true);
         stats.Name = name + "Stats";
-        filter.Stats = stats;
-        refreshers.Add(() => stats.Text = ResultStatsText(name));
+        refreshers.Add(() =>
+        {
+            stats.Text = ResultStatsText(name);
+            stats.Visibility = stats.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
         var grid = new Grid { RowSpacing = 8 };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -370,8 +324,12 @@ public sealed partial class MainWindow
         empty.HorizontalAlignment = HorizontalAlignment.Center;
         empty.VerticalAlignment = VerticalAlignment.Center;
         empty.IsHitTestVisible = false;
-        refreshers.Add(() => empty.Visibility = backend.State[name] is JsonArray { Count: > 0 }
-            ? Visibility.Collapsed : Visibility.Visible);
+        refreshers.Add(() =>
+        {
+            empty.Visibility = backend.State[name] is JsonArray { Count: > 0 } ? Visibility.Collapsed : Visibility.Visible;
+            if (name == "questions")
+                empty.Text = J.I(Summary, "questionCount") > 0 ? emptyMessage : "本轮暂无逐题记录。开始处理章节测验后，题目会显示在这里。";
+        });
         return new Grid { Children = { list, empty } };
     }
 
@@ -380,13 +338,8 @@ public sealed partial class MainWindow
         var summary = Summary;
         if (name == "questions")
         {
-            var stats = summary?["questionStats"];
-            string text = "最近 " + J.I(summary, "questionCount") + " 条 · 题库轮次 " + J.I(stats, "query_attempts") +
-                " · 题库请求 " + J.I(stats, "requests") + " · 题库候选 " + J.I(stats, "candidates") +
-                " · 已采用 " + J.I(stats, "resolved") + " · 缓存 " + J.I(stats, "cache") +
-                " / AI " + J.I(stats, "ai") + " / 人工 " + J.I(stats, "manual") + " / 随机 " + J.I(stats, "random");
             int evicted = J.I(summary, "questionEvicted");
-            return text + (evicted > 0 ? " · 已淘汰 " + evicted + " 条旧记录" : "") + "。统计不代表答案正确率。";
+            return evicted > 0 ? $"已淘汰 {evicted} 条旧记录。" : "";
         }
         if (name == "discussions")
         {
@@ -442,7 +395,7 @@ public sealed partial class MainWindow
         if (!resultFilters.TryGetValue("questions", out var filter)) return;
         if (filter.Scope != null)
         {
-            filter.Scope.Text = questionTask.Length > 0 ? "已筛选章节" : "全部章节";
+            filter.Scope.Text = questionTask.Length > 0 ? "已筛选章节" : "";
             ToolTipService.SetToolTip(filter.Scope, questionTask);
         }
         if (filter.ClearScope != null) filter.ClearScope.Visibility = questionTask.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -597,7 +550,7 @@ public sealed partial class MainWindow
         string signature = backend.State[name]?.ToJsonString() ?? "[]";
         if (listSignatures.GetValueOrDefault(name) == signature) return;
         listSignatures[name] = signature;
-        SyncRows(name, list, J.A(backend.State[name]).Select(n => new RecordRow(n)));
+        SyncRows(name, list, J.A(backend.State[name]).Select(n => new RecordRow(n, question: name == "questions")));
     }
     private void SyncRows(string name, ListView list, IEnumerable<RecordRow> incoming)
     {
@@ -637,7 +590,8 @@ public sealed partial class MainWindow
             text = J.S(record, "detailText");
             if (text.Length == 0) text = kind == "discussions" ? DiscussionDetailText(record) : DetailText(record);
         }
-        var dialog = Dialog(J.S(row, "title", "记录详情"), ReadOnlyBody(text));
+        string title = J.S(row, "title");
+        var dialog = Dialog(string.IsNullOrWhiteSpace(title) ? "记录详情" : title, ReadOnlyBody(text));
         if (kind == "questions")
         {
             dialog.SecondaryButtonText = "复制详情";
@@ -678,7 +632,7 @@ public sealed partial class MainWindow
         string answer = J.S(detail, "answer");
         string source = J.S(detail, "sourceText");
         if (source.Length == 0) source = J.S(detail, "source");
-        return (title.Length > 0 ? title : "该记录已被清除或淘汰") +
+        return (string.IsNullOrWhiteSpace(title) ? "题干无可显示文字" : title) +
             "\n\n选项：\n" + J.S(detail, "options") +
             "\n\n采用答案：\n" + (answer.Length > 0 ? answer : "未采用") +
             "\n原因：" + J.S(detail, "reason") +

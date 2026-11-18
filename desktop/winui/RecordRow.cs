@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.ComponentModel;
+using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
@@ -35,7 +36,7 @@ public sealed class RecordRow : INotifyPropertyChanged
     }
 
     private void Changed(string property) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
-    public RecordRow(JsonNode data, bool course = false, bool ids = false)
+    public RecordRow(JsonNode data, bool course = false, bool ids = false, bool question = false)
     {
         Data = data;
         Title = J.S(data, "title", J.S(data, "question"));
@@ -58,16 +59,32 @@ public sealed class RecordRow : INotifyPropertyChanged
             if (ids) Subtitle += " · 课程 " + J.S(data, "courseId") + " / 班级 " + J.S(data, "clazzId");
             Status = progress?["total"] != null ? $"已完成 {J.I(progress, "completed")} / {J.I(progress, "total")} 章" : J.B(progress, "loading") ? "统计中…" : J.B(progress, "failed") ? "统计失败" : "待统计";
         }
+        else if (question)
+        {
+            if (string.IsNullOrWhiteSpace(Title)) Title = "题干无可显示文字";
+            var answer = J.S(data, "answer");
+            Subtitle = answer.Length > 0 ? "答案：" + answer.ReplaceLineEndings("；") : J.S(data, "reason");
+            Status = string.Join(" · ", new[] { J.S(data, "stageText"), J.S(data, "sourceText") }.Where(s => s.Length > 0));
+        }
         else
         {
-            Subtitle = string.Join(" · ", new[] { J.S(data, "course"), J.S(data, "chapter"), J.S(data, "reason"), J.S(progress, "name") }.Where(s => s.Length > 0));
+            var media = "";
             Status = J.S(data, "statusText", J.S(data, "stageText", J.S(data, "status", J.S(data, "stage"))));
-            if (progress != null)
+            if (ProgressVisibility == Visibility.Visible)
             {
+                media = J.S(progress, "kind") == "Audio" ? "音频" : "视频";
                 if (J.I(progress, "mediaTotal") > 1)
-                    Status += $" · 媒体 {J.I(progress, "mediaIndex")}/{J.I(progress, "mediaTotal")}";
-                Status += $" · 当前媒体 {Progress:0}% · {J.S(progress, "statusText")}";
+                    media += $" {J.I(progress, "mediaIndex")}/{J.I(progress, "mediaTotal")}";
+                media += $" · {MediaTime(progress, "position")} / {MediaTime(progress, "duration")} · {J.S(progress, "statusText")} · {J.S(progress, "name")}";
             }
+            Subtitle = string.Join(" · ", new[] { media, J.S(data, "course"), J.S(data, "chapter"), J.S(data, "reason") }.Where(s => s.Length > 0));
         }
+    }
+
+    private static string MediaTime(JsonNode? media, string key)
+    {
+        double.TryParse(J.S(media, key), NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds);
+        var wholeSeconds = (long)seconds;
+        return $"{wholeSeconds / 60}:{wholeSeconds % 60:00}";
     }
 }

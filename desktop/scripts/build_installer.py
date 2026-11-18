@@ -22,7 +22,7 @@ RETIRED_SOURCE_ARCHIVE = 'Source/ChaoxingDesktop-0.4.2-source.zip'
 
 def retired_runtime_files():
     """Exact old payload names; never interpret user paths or wildcards."""
-    paths = [Path(f'Source/ChaoxingDesktop-{version}-source.zip') for version in ('0.5.0', '0.6.0')]
+    paths = [Path(f'Source/ChaoxingDesktop-{version}-source.zip') for version in ('0.5.0', '0.6.0', '0.6.1')]
     for name in RETIRED_LISTS:
         for line in (ROOT / 'scripts' / name).read_text(encoding='utf-8').splitlines():
             if not line or line.startswith('#'):

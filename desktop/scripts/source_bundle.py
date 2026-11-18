@@ -10,6 +10,7 @@ def source_files(desktop: Path):
         "requirements-lock.txt",
         "scripts/retired-runtime-0.3.5.txt",
         "scripts/retired-runtime-0.4.2.txt",
+        "tests/test_ordered_chapters.py",
         # Public compile input: ChaoxingDesktop.csproj uses it as ApplicationIcon
         # and copies it next to the executable. Only this file is added; the
         # assets filter stays SVG-only so no other binary is swept in.

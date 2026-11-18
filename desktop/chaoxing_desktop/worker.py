@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import os
@@ -116,7 +117,8 @@ def demo(channel, command):
     chosen = select_courses(courses, command.get("selected", []))
     tasks = [dict(id=f"{c['courseId']}:{i}", course=c["title"], title=t,
                   courseId=c["courseId"], clazzId=c["clazzId"], pointId=str(i))
-             for c in chosen for i, t in enumerate(("01 · 视频学习", "02 · 阅读材料", "03 · 章节练习"))]
+             for c in chosen for i, t in enumerate(("01 · 音频学习" if c['courseId'] == 'demo-102' else "01 · 视频学习",
+                                                     "02 · 阅读材料", "03 · 章节练习"))]
     resume = command.get('resume')
     completed = set()
     if resume is not None:
@@ -137,17 +139,23 @@ def demo(channel, command):
             continue
         channel.send("task", id=task["id"], status="running")
         channel.send("log", message=f"正在处理 {task['course']} / {task['title']}", level="INFO")
-        if '视频' in task['title']:
-            for position in (0, 40, 80, 120):
-                channel.send('media', id=task['id'], name='离线演示视频', kind='Video',
-                             duration=120, position=position, verified=position == 120)
+        if task['pointId'] == '0':
+            audio = task['courseId'] == 'demo-102'
+            duration = 75 if audio else 120
+            for position in (0, duration // 3, 2 * duration // 3, duration):
+                channel.send('media', id=task['id'], name='离线演示音频' if audio else '离线演示视频',
+                             kind='Audio' if audio else 'Video', duration=duration, position=position,
+                             verified=position == duration)
                 controlled_wait(channel, .15)
         else:
             controlled_wait(channel, .6)
         if '练习' in task['title']:
             from types import SimpleNamespace
             from .answers import AnswerRouter
-            router = AnswerRouter(command['config'], channel, [('演示题库', SimpleNamespace(_query=lambda q: '第二项'))])
+            demo_bank = [('演示题库', SimpleNamespace(_query=lambda q: '第二项'))]
+            if command['config']['desktop']['manual_fallback'] == 'true':
+                demo_bank = []
+            router = AnswerRouter(command['config'], channel, demo_bank)
             router.set_context(task_id=task['id'], work_id='demo-work', attempt=0)
             router.query_all([dict(id='demo-question', title='以下哪项是演示答案？', type='single', options='A.第一项\nB.第二项')])
             channel.send('discussion_result', record=dict(
@@ -158,7 +166,6 @@ def demo(channel, command):
                 reason='离线示例草稿，未调用 AI、未发布。开启真实讨论功能后按独立配置处理。',
                 content='大学生可以通过扎实学习专业知识、参与社会实践与志愿服务，在具体行动中提升能力、承担责任。'))
             from .activity import ActivityGenerator, preview_context
-            from .answers import AnswerRouter
             context = preview_context('你对本课程有什么建议？')
             local_cfg = dict(choice_strategy='random', text_strategy='fixed_good', reply_level='medium')
             answers = ActivityGenerator(AnswerRouter(command['config'], channel)).generate(context, local_cfg)
@@ -173,26 +180,27 @@ def demo(channel, command):
 
 
 def run_tasks(channel, tasks, process, config, result_enum, verify=None):
-    """Bounded chapter scheduling, retry in rounds so dependent chapters can unlock."""
+    """有解锁顺序的课程逐章推进，其余章节可并发处理。"""
     pending = list(tasks)
     statuses = {}
     for attempt in range(5):
         checkpoint(channel)
         retry = []
+        groups = {}
+        for task in pending:
+            groups.setdefault(task.get('serial_course', task['id']), []).append(task)
+        ready = deque((group[0], iter(group[1:])) for group in groups.values())
         with ThreadPoolExecutor(max_workers=config["jobs"]) as executor:
             def execute(task):
                 checkpoint(channel)
                 channel.send("task", id=task["id"], status="running")
                 return process(task)
-            remaining = iter(pending)
             futures = {}
             def fill_slots():
-                while len(futures) < config["jobs"]:
+                while ready and len(futures) < config["jobs"]:
                     checkpoint(channel)
-                    task = next(remaining, None)
-                    if task is None:
-                        break
-                    futures[executor.submit(execute, task)] = task
+                    task, following = ready.popleft()
+                    futures[executor.submit(execute, task)] = (task, following)
             fill_slots()
             while futures:
                 checkpoint(channel)
@@ -200,12 +208,15 @@ def run_tasks(channel, tasks, process, config, result_enum, verify=None):
                 # Pop completed futures promptly; do not retain every result or
                 # exception traceback until thousands of chapters have finished.
                 for future in completed:
-                    task = futures.pop(future)
+                    task, following = futures.pop(future)
                     handle_result(future, task, attempt, retry, statuses, channel, config, result_enum)
                     if verify is not None and statuses[task['id']] in ('processed', 'pending'):
                         checkpoint(channel)
                         statuses[task['id']] = verify(task)
                         channel.send('task', id=task['id'], status=statuses[task['id']])
+                    next_task = next(following, None)
+                    if next_task is not None:
+                        ready.appendleft((next_task, following))
                 fill_slots()
         if not retry:
             break
@@ -322,7 +333,7 @@ def real(channel, command):
     if verifying:
         from .verification import verify_chapters
         from .task_completion import TaskCompletionCache
-        verify_chapters(cx, channel, courses, command.get('targets', []), records=command.get('verify_records') is True,
+        verify_chapters(cx, channel, courses, command.get('targets', []),
                         completion_cache=TaskCompletionCache(command['data_dir'], account_id, uid))
         return
     chosen = select_courses(courses, command.get("selected", []))
@@ -413,7 +424,8 @@ def real(channel, command):
         course_tasks = []
         tasks_by_course[(str(course["courseId"]), str(course["clazzId"]))] = course_tasks
         channel.send('course_progress_loading', **progress_identity(course))
-        points = cx.get_course_point(course["courseId"], course["clazzId"], course["cpi"])["points"]
+        catalog = cx.get_course_point(course["courseId"], course["clazzId"], course["cpi"])
+        points = catalog['points']
         completed = completion_cache.read(course) if completion_cache else {}
         try:
             send_progress(channel, course, points)
@@ -431,6 +443,8 @@ def real(channel, command):
                 continue
             task = dict(id=f"{course['courseId']}:{course['clazzId']}:{point['id']}:{i}",
                         title=point["title"], course=course["title"], course_data=course, point=point)
+            if catalog.get('hasLocked'):
+                task['serial_course'] = course_key(course)
             if wanted is not None:
                 scope = wanted[str(point['id'])]
                 # Only chapters actually scanned before the stop constrain the

@@ -192,6 +192,17 @@ public sealed partial class MainWindow : Window
             await WaitFor(() => J.I(Summary, "selectedCount") == demoCourses);
             await backend.Call("startTasks");
             await WaitFor(() => !Busy && resultLists["tasks"].Items.Count == demoTasks && J.I(Summary, "progress") == 100);
+            var taskRows = resultLists["tasks"].Items.OfType<RecordRow>().ToArray();
+            if (!taskRows.Any(row => row.Subtitle.Contains("视频 · 2:00 / 2:00")) ||
+                !taskRows.Any(row => row.Subtitle.Contains("音频 · 1:15 / 1:15")))
+                throw new InvalidOperationException("章节任务未显示视频或音频时长。");
+            var questions = resultLists["questions"].Items.OfType<RecordRow>().ToArray();
+            if (questions.Length != demoCourses || questions.Any(row => row.Subtitle != "答案：第二项"))
+                throw new InvalidOperationException("逐题结果未显示离线题目的答案。");
+            SetQuestionScope(J.S(questions[0].Data, "task_id"));
+            await WaitFor(() => resultLists["questions"].Items.Count == 1);
+            SetQuestionScope("");
+            await WaitFor(() => resultLists["questions"].Items.Count == demoCourses);
             success = J.B(Summary, "demo") && J.I(Summary, "success") == demoTasks;
             message = success ? "WinUI 3 离线读课与任务验收通过。" : "离线任务结果与界面记录不一致。";
         }

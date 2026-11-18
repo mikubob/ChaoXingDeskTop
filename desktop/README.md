@@ -1,8 +1,8 @@
 # 桌面版使用与开发指南
 
-**版本：0.6.1** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
+**版本：0.6.2** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
 
-[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.1) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.2) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 本文中的命令默认在 `desktop` 目录的 PowerShell 中执行。
 
@@ -16,7 +16,7 @@
 
 安装后可通过桌面或开始菜单快捷方式启动。升级前退出旧程序，再安装到原目录；安装器保留原 `installation.json`，沿用已有设置、账号、Cookie 和凭据。卸载保留个人数据。
 
-覆盖安装时，安装器按清单移除已经停用的旧 QML 运行文件，以及 0.4.2、0.5.0 和 0.6.0 安装包附带的旧源码 ZIP。清理限于点名文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
+覆盖安装时，安装器按清单移除已经停用的旧 QML 运行文件，以及 0.4.2、0.5.0、0.6.0 和 0.6.1 安装包附带的旧源码 ZIP。清理限于点名文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
 
 如果使用完整程序目录，打开 `ChaoxingDesktop.exe` 即可。请保留 `_internal`、`ChaoxingWorker.exe` 及目录中的其他文件；后台组件由主程序启动。
 
@@ -56,7 +56,9 @@ WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保�
 
 ### 4. 进度与任务控制
 
-在「任务与日志」查看章节、媒体与逐题结果。任务进度表示本轮处理进度；媒体达到时长后仍需平台确认，待核验状态不会等同于平台已完成。
+在「任务与日志」查看章节、媒体和当前测验的逐题结果。视频与音频显示已播放时间和总时长。任务进度表示本轮处理进度；媒体达到时长后仍需平台确认。
+
+课程目录显示章节需要解锁时，该课程按目录顺序处理，其他课程仍可并发。平台仍显示未开放的章节按学习设置中的策略处理。
 
 「暂停后续」阻止新的调度、答题请求和写入，在途请求及当前媒体可以继续。停止先协作取消，超时后终止后台；已经送达平台的请求不会撤回。
 
@@ -92,7 +94,7 @@ WinUI 的「启动时使用已保存会话登录」默认关闭。开启并保�
 - 课程底栏的「查看本轮策略」集中显示三类提交开关、隐藏的已选课程、题库顺序、AI／人工／随机与通知类型。首次使用或修改自动提交策略后确认一次；普通只保存不增加确认。确认期间账号、会话、课程或配置变化会使确认失效。
 - 服务页默认显示紧凑题库列表，展开所选详情；「AI 设置」可直接进入 AI 表单。编辑、启用与排序保留输入控件。真实连接检查需主动触发，可能消耗额度；配置变化使上次检查过期。
 - 「任务与日志 → 需处理」汇总章节、题目、讨论和活动的原因，可按类别与关键词筛选、键盘打开全文。聚合显示最多 2000 项／8 MiB，淘汰显示不会清除防重记录。运行日志位于同页的「运行日志」标签，可按文本和级别筛选。
-- 「只读核验章节」仅使用当前已读取课程的 Cookie 会话，重新读取章节完成状态。「核验本人讨论／活动」另读任务卡与本人参与证据，分别展示本人状态、任务点和章节状态。未知卡数时最多扫描 7 卡。两个入口均不生成、保存答案、提交、发布或调用活动完成回调，也不清除 unknown／intent；未找到记录不能解除重发限制。会话过期时先重新读课，不回退到密码登录。
+- 「核验章节」使用当前已读取课程的 Cookie 会话，只读查询待完成章节的平台进度。会话过期后，请重新读取课程。
 - 「高级设置 → 导出排障配置」只导出已知布尔、枚举、数值策略和版本。地址、凭据、账号、正文和未知扩展字段全部省略；完整 INI 仍为明确标注含凭据的个人备份选项。数据说明可查看 profile、DPAPI 和备份边界。
 - 「运行摘要」按账号隔离，最多 20 轮／2 MiB，每轮最多 1000 个未完成章节标题及定位；最多每 2 秒写入一次原子快照。摘要包含课程名和课程／章节标识，未加密，不保存题干或答案。「从摘要选课」先重新核实身份并读课，再选择能定位的未完成课程；不自动启动，不重放旧请求。旧摘要没有定位时仍可回看，需手动选课。
 - AI 设置新增「每次操作 AI 请求硬上限」，0 为不限。一次课程运行内，连接预检、测验、讨论和活动共享上限，重试也计数；主动连接检查和预览分别为独立操作。可设服务返回 token 的累计告警（0 关闭），只告警、不阻断；缺失 usage 显示未知，不估造 token 或账单。
@@ -132,19 +134,19 @@ python -m venv .venv-build
 ### 构建程序
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.1/ChaoxingDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.2/ChaoxingDesktop
 ```
 
 构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后发布自包含 WinUI 3 界面，使用 PyInstaller 打包 Python 后台，并验收冻结后台与原生界面。开发机还需要 .NET 8 SDK。
 
-程序输出至 `dist/release-0.6.1/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
+程序输出至 `dist/release-0.6.2/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
 
 先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与冻结后台和原生界面的验收标记，因此必须先完成带 GUI 验收的构建：
 
 ```powershell
-.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.1/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
+.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.2/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
 ```
 
 `--compiler` 指向本机的 `makensis.exe`（[NSIS 下载](https://nsis.sourceforge.io/Download)），相对路径以 `desktop` 为基准；`--app` 默认不推断，必须显式给出已验收的程序目录，`--output` 默认写入项目根目录的 `release/`。仓库内 `desktop/build/` 下的 NSIS 与 .NET SDK 属本机工具，不进入源码包，也不随安装包分发。
@@ -152,9 +154,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDir
 产物默认写入项目根目录的 `release/`：
 
 ```text
-ChaoxingDesktop-0.6.1-Setup-win-x64.exe
-ChaoxingDesktop-0.6.1-source.zip
-ChaoxingDesktop-0.6.1-installer-SHA256.json
+ChaoxingDesktop-0.6.2-Setup-win-x64.exe
+ChaoxingDesktop-0.6.2-source.zip
+ChaoxingDesktop-0.6.2-installer-SHA256.json
 ```
 
 安装包包含完整程序、对应源码 ZIP、许可和第三方声明。生成安装包前会核对程序版本、源码与产物哈希，以及冻结后台和原生界面的验收标记。用于正式发布的构建须完成原生界面验收。修改构建输入后，需要重新构建和验收。

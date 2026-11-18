@@ -203,7 +203,6 @@ class Backend(QObject):
         self._account_rows_cache, self._cookie_exists = [], False
         self._job_scope = {}
         self.verification_progress = {}
-        self._record_cards = {}
         self.configChanged.connect(self.refresh_account_status)
         self.refresh_account_status()
         self.refresh_redactor()
@@ -873,7 +872,6 @@ class Backend(QObject):
         self.cancel_course_progress()
         self._resume = None
         self._course_progress.clear()
-        self._record_cards.clear()
         self.verification_progress = {}
         self._recovery = None
         self._draft = None
@@ -1118,6 +1116,8 @@ class Backend(QObject):
             if self._resume is None or not self._resume_exited():
                 raise ValueError('旧后台尚未确认退出，暂不能续跑。')
         config = defaults() if demo else self.config
+        if demo and action == 'run':
+            config['desktop']['manual_fallback'] = self.config['desktop']['manual_fallback']
         if action == "courses" and not demo:
             account = defaults()
             for key in ('username', 'password', 'use_cookies'):
@@ -1517,17 +1517,6 @@ class Backend(QObject):
 
     @Slot()
     def verifyPending(self):
-        self._verify(False)
-
-    @Slot()
-    def verifyRecords(self):
-        self._verify(True)
-
-    @Slot()
-    def verifyAllRecords(self):
-        self._verify(True, all_records=True)
-
-    def _verify(self, records, all_records=False):
         def run():
             if self.busy:
                 raise ValueError('请先结束当前操作。')
@@ -1536,16 +1525,11 @@ class Backend(QObject):
                 return
             if self.identity() != self.course_identity:
                 raise ValueError('账号或会话已变化，请重新读取课程。')
-            related = {r['task_id'] for model in (self._discussion_model, self._activity_model) for r in model.rows}
             targets = [{k: t[k] for k in ('id', 'courseId', 'clazzId', 'pointId')}
-                       for t in self.tasks if (all_records or t['status'] != 'success' or records and t['id'] in related)
+                       for t in self.tasks if t['status'] != 'success'
                        and all(k in t for k in ('courseId', 'clazzId', 'pointId'))]
             if not targets:
                 raise ValueError('当前没有可定位的待核验章节，请先读取并运行课程。')
-            if records and not all_records:
-                for target in targets:
-                    if target['id'] in self._record_cards:
-                        target['record_cards'] = self._record_cards[target['id']]
             config = defaults()
             config['common'].update(username=self.config['common']['username'], password='', use_cookies='true')
             validate(config, login=True, cookie_path=self.cookie_path())
@@ -1555,14 +1539,12 @@ class Backend(QObject):
             self.operation_account = self.account_store.active
             payload = to_payload(config)
             self.log_redactor = Redactor(payload)
-            self.mode = '本人记录全量发现' if all_records else '本人记录待处理核验' if records else '只读章节核验'
+            self.mode = '只读章节核验'
             self.controller.start(dict(action='verify', config=payload, demo=False, targets=targets,
-                                       verify_records=records,
                                        data_dir=str(data_dir()), account_id=self.operation_account,
                                        cookie_mtime_ns=self.cookie_path().stat().st_mtime_ns,
                                        account_uid=self.account_store.get(self.operation_account)['uid']))
-            self.notify(('全量发现所有可定位章节，卡数未知时每章最多读取 7 卡。' if all_records else
-                         '范围：待处理章节及本轮已有讨论／活动的关联章节。' if records else '范围：待核验章节。') + '只读查询已启动，未决意图保留。')
+            self.notify('正在核验待完成章节的平台进度。')
         self.execute(run)
 
     @Slot(bool, str)
@@ -1765,10 +1747,6 @@ class Backend(QObject):
         if event.get('run_id', self.controller.run_id) != self.controller.run_id:
             return
         kind = event.get("type")
-        if kind == 'record_card_hint':
-            if self.operation == 'run' and len(self._record_cards) < 10000:
-                self._record_cards[event['id']] = sorted(set(event['indices']))
-            return
         if kind == 'job_scope':
             # Task points observed for a chapter in this run; a continuation
             # keeps exactly these instead of adopting ones added later.
@@ -1827,28 +1805,6 @@ class Backend(QObject):
             self.mode = '只读核验已结束'
             self._progress_timer.stop()
             self.notify(event['message'], 'info')
-            return
-        if kind == 'record_verification':
-            if (self.operation != 'verify' or not self.operation_account or not self.account_store
-                    or self.account_store.active != self.operation_account):
-                return
-            label = '讨论' if event['kind'] == 'discussion' else '投票／问卷'
-            model = self._discussion_model if event['kind'] == 'discussion' else self._activity_model
-            index = model.indices.get(event['id'])
-            detail = model.rows[index] if index is not None else {}
-            task_index = self._task_model.indices.get(event['task_id'])
-            if task_index is None:
-                return
-            task = self.tasks[task_index]
-            # Evidence is a separate view, never overwrite drafts or intent states.
-            self._attention_model.upsert('核验:' + label + ':' + event['id'],
-                dict(id=event['id'], task=event['task_id'], kind=label, title=detail.get('title', task['title']),
-                     course=task['course'], status={'existing': '本人已参与', 'absent': '本次未发现', 'unknown': '证据不足'}[event['participation']],
-                     bucket='platform', reason=event['checked_at'] + '\n' + event['reason'] + '\n任务点：' +
-                     ('已确认' if event['task_status'] == 'confirmed' else '待确认'),
-                     next='在平台检查当前本人记录。历史与本地未决意图保持，不提供强制重发。'))
-            if not self._progress_timer.isActive():
-                self._progress_timer.start()
             return
         if kind in ('activity_result', 'activity_preview'):
             if event['record']['run_id'] != self.controller.run_id:

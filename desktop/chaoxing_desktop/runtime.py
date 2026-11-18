@@ -44,7 +44,6 @@ def create_client(config, channel, courses_only=False):
                           media_total=getattr(client.desktop_media_context, 'media_total', 1))
             channel.send('media', id=task_id, **values)
     client.desktop_media_progress = media_progress
-    client.desktop_record_cards = lambda **values: channel.send('record_card_hint', **values)
     client.desktop_job_scope = lambda **values: channel.send('job_scope', **values)
     return client
 
@@ -137,12 +136,6 @@ def _process_chapter(client, course, point, speed, allowed_jobs=None):
             logger.warning('续跑：章节「{}」有 {} 个任务点不在原范围内（含缺少稳定标识的 {} 个），本轮不处理。',
                            point.get('title', ''), dropped, unidentified)
         jobs = kept
-    hint = getattr(client, 'desktop_record_cards', None)
-    if hint and task_id:
-        indices = {str(j.get('_job_info', {}).get('card_index', '')) for j in jobs
-                   if j.get('type') in ('discussion', 'activity')}
-        if indices and all(i.isdigit() and 0 <= int(i) < 64 for i in indices):
-            hint(id=task_id, indices=sorted({int(i) for i in indices}))
     observe = getattr(client, 'desktop_job_scope', None)
     if observe and task_id:
         # Record what this chapter contains so a later continuation can keep

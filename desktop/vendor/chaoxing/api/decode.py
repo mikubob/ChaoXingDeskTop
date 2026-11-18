@@ -130,18 +130,11 @@ def _extract_points_from_chapter(chapter_unit) -> List[Dict[str, Any]]:
         point_id = re.findall(r"^cur(\d{1,20})$", point.attrs["id"])[0]
         point_title = point.select_one("a.clicktitle").text.replace("\n", "").strip()
 
-        # 提取任务数量
-        job_count = 1  # 默认为1
-        need_unlock = False
-        if point.select_one("input.knowledgeJobCount"):
-            job_count = point.select_one("input.knowledgeJobCount").attrs["value"]
-        elif point.select_one("span.bntHoverTips") and "解锁" in point.select_one("span.bntHoverTips").text:
-            need_unlock = True
-
-        # 判断是否已完成
-        is_finished = False
-        if point.select_one("span.bntHoverTips") and "已完成" in point.select_one("span.bntHoverTips").text:
-            is_finished = True
+        count_field = point.select_one("input.knowledgeJobCount")
+        job_count = count_field["value"] if count_field else 1
+        hints = point.select("span.bntHoverTips")
+        need_unlock = any("解锁" in hint.text for hint in hints)
+        is_finished = any("已完成" in hint.text for hint in hints)
 
         point_detail = {
             "id": point_id,

@@ -324,20 +324,16 @@ public sealed partial class MainWindow
         if (kind is "integer" or "number") panel.Children.Add(Text($"范围：{J.S(spec, "low")}–{J.S(spec, "high")}", 11, true));
         if (J.S(spec, "hint") is { Length: > 0 } hint)
         {
-            if (fieldId is "matching.min_similarity" or "matching.min_margin")
+            var help = new Button
             {
-                var help = new Button
-                {
-                    Content = new FontIcon { Glyph = "\uE946", FontSize = 14 },
-                    VerticalAlignment = VerticalAlignment.Bottom,
-                    Flyout = new Flyout { Content = Text(hint) },
-                };
-                AutomationProperties.SetName(help, title + "说明");
-                ToolTipService.SetToolTip(help, hint);
-                panel.Children.RemoveAt(0);
-                panel.Children.Insert(0, StretchRow(input, help));
-            }
-            else panel.Children.Add(Text(hint, 12, true));
+                Content = new FontIcon { Glyph = "\uE946", FontSize = 14 },
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Flyout = new Flyout { Content = Text(hint) },
+            };
+            AutomationProperties.SetName(help, title + "说明");
+            ToolTipService.SetToolTip(help, hint);
+            panel.Children.RemoveAt(0);
+            panel.Children.Insert(0, StretchRow(input, help));
         }
         if (spec["depends"] is JsonObject dependency && J.S(dependency, "key") != "")
         {

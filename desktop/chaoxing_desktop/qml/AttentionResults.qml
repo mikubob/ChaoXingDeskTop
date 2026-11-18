@@ -13,9 +13,6 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         ActionButton { objectName: "verifyPending"; text: "只读核验章节"; enabled: !workbenchSummary.busy; onClicked: bridge.verifyPending() }
-        ActionButton { objectName: "verifyRecords"; text: "核验本人讨论／活动（待处理）"; enabled: !workbenchSummary.busy; onClicked: bridge.verifyRecords() }
-        ActionButton { objectName: "verifyAllRecords"; text: "全量发现本人记录"; enabled: !workbenchSummary.busy; onClicked: bridge.verifyAllRecords() }
-        Text { text: "只读 · 未决意图保留"; color: "#627086"; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 12 }
     }
     Text {
         property var progress: workbenchSummary.verificationProgress || ({})

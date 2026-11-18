@@ -154,24 +154,14 @@ class Controller(QObject):
                     all(isinstance(event.get(k), str) and len(event[k]) <= 2000 for k in ('id', 'checked_at', 'reason')))
         if kind == 'verification_failed':
             return all(isinstance(event.get(k), str) and len(event[k]) <= 2000 for k in ('id', 'checked_at', 'reason'))
-        if kind == 'record_card_hint':
-            return (isinstance(event.get('id'), str) and len(event['id']) <= 256
-                    and isinstance(event.get('indices'), list) and 0 < len(event['indices']) <= 64
-                    and all(type(i) is int and 0 <= i < 64 for i in event['indices']))
         if kind == 'job_scope':
             jobs = event.get('jobs')
             return (isinstance(event.get('id'), str) and 0 < len(event['id']) <= 256
                     and isinstance(jobs, list) and len(jobs) <= 1000
                     and all(isinstance(job, list) and len(job) == 3
                             and all(isinstance(v, str) and len(v) <= 256 for v in job) for job in jobs))
-        if kind == 'record_verification':
-            return (event.get('kind') in ('discussion', 'activity') and
-                    event.get('participation') in ('existing', 'absent', 'unknown') and
-                    event.get('task_status') in ('confirmed', 'pending') and
-                    all(isinstance(event.get(k), str) and len(event[k]) <= 2000
-                        for k in ('id', 'task_id', 'checked_at', 'reason')))
         if kind == 'verification_progress':
-            return (event.get('phase') in ('session', 'courses', 'chapters', 'cards', 'records')
+            return (event.get('phase') in ('session', 'courses', 'chapters')
                     and isinstance(event.get('message'), str) and len(event['message']) <= 2000
                     and all(type(event.get(k)) is int and 0 <= event[k] <= 10**9
                             for k in ('completed', 'total', 'reads', 'failures', 'elapsed_ms'))

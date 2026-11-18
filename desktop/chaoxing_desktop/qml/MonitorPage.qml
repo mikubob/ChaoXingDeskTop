@@ -38,8 +38,6 @@ ColumnLayout {
         }
         Text { text: workbenchSummary.progress + "%"; font.bold: true; color: "#2563eb" }
     }
-    Text { text: "按章节统计，同一章节可含多个任务点；处理进度 100% 表示本轮结束，待完成 / 未核验章节请在平台确认。"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#627086"; font.pixelSize: 12 }
-    Text { text: "本次操作 AI 请求 " + bridge.aiUsage.requests + " / " + (bridge.aiUsage.limit || "不限") + " · 服务返回 token " + bridge.aiUsage.tokens + "（" + bridge.aiUsage.known + " 次有 usage，" + bridge.aiUsage.unknown + " 次用量未知）· 不等于账单或正确率"; color: "#627086"; font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
     Text { visible: !!bridge.aiWarning; text: bridge.aiWarning; color: "#995a0d"; font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
     SplitView {
         Layout.fillWidth: true; Layout.fillHeight: true; orientation: Qt.Vertical
