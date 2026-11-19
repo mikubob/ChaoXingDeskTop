@@ -6,7 +6,6 @@ namespace ChaoxingDesktop;
 public sealed partial class MainWindow
 {
     private Grid? courseHost;
-    private Border? accountConnectionCard;
     private FrameworkElement[] courseViews = [];
     private Button? returnToCourses;
     private bool showingMyCourses;

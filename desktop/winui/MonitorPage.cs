@@ -42,7 +42,7 @@ public sealed partial class MainWindow
 
     private FrameworkElement BuildMonitor()
     {
-        var grid = new Grid { RowSpacing = 12 };
+        var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var statGrid = new Grid { ColumnSpacing = 14 };
@@ -56,15 +56,17 @@ public sealed partial class MainWindow
             var label = Text(labels[i], 12);
             value.Foreground = label.Foreground = ThemeBrush(colors[i]);
             chapterStatValues[key] = value;
-            var card = Card(Column(value, label));
+            var stat = Column(value, label);
+            stat.Spacing = 2;
             statGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            statGrid.Children.Add(card);
-            Grid.SetColumn(card, i);
+            statGrid.Children.Add(stat);
+            Grid.SetColumn(stat, i);
             refreshers.Add(() => value.Text = J.S(Summary, key, "0"));
         }
         var aiWarningText = Text("", 12);
         aiWarningText.Name = "AiWarningText";
         aiWarningText.Foreground = ThemeBrush("WarningBrush");
+        aiWarningText.Margin = new Thickness(0, 0, 0, 12);
         aiWarningText.Visibility = Visibility.Collapsed;
         refreshers.Add(() =>
         {
@@ -72,7 +74,6 @@ public sealed partial class MainWindow
             aiWarningText.Text = warning;
             aiWarningText.Visibility = warning.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         });
-        var header = Column(statGrid, aiWarningText);
         var taskList = ResultList("tasks", "TaskTemplate");
         var taskArea = ResultsArea("tasks", taskList, "暂无章节任务。请在「我的课程」选择课程并开始任务。");
         var progressLabel = Text("本轮处理进度 0%", 12);
@@ -88,8 +89,6 @@ public sealed partial class MainWindow
         var taskProgress = Column(progressLabel, progress);
         taskProgress.Spacing = 6;
         var tasks = new Grid { RowSpacing = 12 };
-        tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         tasks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         tasks.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var verifyChapters = Button("核验章节", async () => await Call("verifyPending"), true);
@@ -126,13 +125,9 @@ public sealed partial class MainWindow
                 ? (scope.Length > 0 ? "原范围：" + scope + "\n" : "") + J.S(state, "reason")
                 : "";
         });
-        tasks.Children.Add(StretchRow(verifyChapters, records));
-        tasks.Children.Add(resumeCard);
-        tasks.Children.Add(taskProgress);
-        Grid.SetRow(resumeCard, 1);
-        Grid.SetRow(taskProgress, 2);
+        tasks.Children.Add(Column(Card(Column(statGrid, taskProgress)), StretchRow(verifyChapters, records), resumeCard));
         tasks.Children.Add(taskArea);
-        Grid.SetRow(taskArea, 3);
+        Grid.SetRow(taskArea, 1);
         var tabs = Tabs(("章节任务", tasks), ("逐题结果", FilteredResults("questions")),
             ("讨论记录", FilteredResults("discussions")), ("投票／问卷", FilteredResults("activities")),
             ("需处理", FilteredResults("attention")), ("运行日志", BuildLogs()));
@@ -142,7 +137,7 @@ public sealed partial class MainWindow
             if (followLogs && resultTabs.SelectedIndex == resultTabs.Items.Count - 1)
                 DispatcherQueue.TryEnqueue(ScrollLogsToEnd);
         };
-        grid.Children.Add(header);
+        grid.Children.Add(aiWarningText);
         grid.Children.Add(tabs);
         Grid.SetRow(tabs, 1);
         return grid;
@@ -150,8 +145,8 @@ public sealed partial class MainWindow
 
     private UIElement BuildLogs()
     {
-        var logSearch = new TextBox { PlaceholderText = "搜索当前保留日志", Width = 250 };
-        AutomationProperties.SetName(logSearch, "搜索当前保留日志");
+        var logSearch = new TextBox { PlaceholderText = "搜索日志", Width = 250 };
+        AutomationProperties.SetName(logSearch, "搜索日志");
         var level = new ComboBox { ItemsSource = new[] { "全部级别", "警告及错误", "仅错误" }, SelectedIndex = 0, Width = 145 };
         AutomationProperties.SetName(level, "日志级别");
         async Task Filter() => await Call("filterLogs", level.SelectedIndex == 1 ? "WARNING" : level.SelectedIndex == 2 ? "ERROR" : "", logSearch.Text);
@@ -176,7 +171,7 @@ public sealed partial class MainWindow
         {
             if (followLogs) DispatcherQueue.TryEnqueue(ScrollLogsToEnd);
         };
-        logEmpty = Text("暂无日志。离线演示和真实任务的记录将在这里显示。", 12, true);
+        logEmpty = Text("暂无可显示的日志。", 12, true);
         logEmpty.Name = "LogEmpty";
         logEmpty.Margin = new Thickness(4);
         var logArea = new Grid();

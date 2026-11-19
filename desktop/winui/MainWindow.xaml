@@ -78,7 +78,7 @@
   <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="216"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
   <Border Background="{ThemeResource SidebarBrush}" Padding="18">
    <Grid RowSpacing="16"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,18,0,0"><Border Width="40" Height="40" Background="#2563EB" CornerRadius="10"><FontIcon Glyph="&#xE8F1;" Foreground="White" FontSize="23"/></Border><StackPanel><TextBlock Text="超星" FontSize="21" FontWeight="Bold"/><TextBlock Text="学习工作台" FontSize="12" Foreground="{ThemeResource MutedBrush}"/></StackPanel></StackPanel>
+    <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,18,0,0"><Border Width="40" Height="40" Background="#2563EB" CornerRadius="10"><FontIcon Glyph="&#xE8F1;" Foreground="White" FontSize="23"/></Border><TextBlock Text="超星" FontSize="21" FontWeight="Bold" VerticalAlignment="Center"/></StackPanel>
     <Grid x:Name="CategoryHost" Grid.Row="1">
     <ListView x:Name="Navigation" ItemContainerStyle="{StaticResource CategoryItemStyle}" SelectionChanged="Navigate" SelectedIndex="0" Background="Transparent">
      <ListViewItem Tag="0" AutomationProperties.Name="课程与账号"><StackPanel Orientation="Horizontal" Spacing="13"><FontIcon Glyph="&#xE8F1;" FontSize="18"/><TextBlock Text="课程与账号"/></StackPanel></ListViewItem>

@@ -35,11 +35,9 @@ public sealed partial class MainWindow
         var user = BoundText("手机号 / 账号", "common", "username");
         refreshers.Add(() => user.IsReadOnly = J.S(Summary, "activeAccount") != "");
         var password = BoundPassword("登录密码", "common", "password");
-        var label = new TextBox { Name = "AccountNote", Header = "当前账号备注", Width = 280, MaxLength = 80 };
-        var noteTarget = Text("", 13);
-        noteTarget.Name = "AccountNoteTarget";
+        var label = new TextBox { Name = "AccountNote", Header = "当前账号备注", MaxLength = 80 };
         string noteAccountId = "", storedNote = "";
-        var saveNote = Button("保存当前账号备注", async () =>
+        var saveNote = Button("保存备注", async () =>
         {
             if (noteAccountId.Length == 0 || J.S(Summary, "activeAccount") != noteAccountId ||
                 (accounts.SelectedItem as AccountItem)?.Id != noteAccountId)
@@ -60,32 +58,16 @@ public sealed partial class MainWindow
                 label.Text = account == null ? "" : savedLabel;
             noteAccountId = activeId;
             storedNote = savedLabel;
-            string name = savedLabel;
             string username = J.S(account, "username");
-            if (username.Length > 0 && username != name) name += "（" + username + "）";
-            noteTarget.Text = account == null ? "尚未选择账号，请先在上方选择或添加账号。" : "正在管理上方所选账号：" + name;
+            accounts.Header = username.Length > 0 && username != savedLabel ? $"当前学习账号（{username}）" : "当前学习账号";
             label.IsEnabled = saveNote.IsEnabled = account != null && !Busy;
         });
-        var cookieStatus = Text("", 12, true);
-        var savedCookieLogin = Button("使用已保存 Cookie 读取课程", async () =>
+        var savedCookieLogin = Button("用 Cookie 读取课程", async () =>
         {
             await backend.Call("setValue", ["common", "use_cookies", "true"]);
             await Call("fetchCourses");
-        }, true, "#2563EB");
+        }, true);
         savedCookieLogin.Name = "SavedCookieLogin";
-        var cookieEntry = new Border
-        {
-            Background = ThemeBrush("BannerBrush"), BorderBrush = ThemeBrush("BorderBrush"),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(16),
-            Child = Column(cookieStatus,
-                Row(savedCookieLogin, Button("导入 Cookie", () => FileAction("fileAction", ["import_cookie"], false, "txt"), true))),
-        };
-        refreshers.Add(() =>
-        {
-            bool saved = J.B(Summary, "cookie");
-            savedCookieLogin.Visibility = saved ? Visibility.Visible : Visibility.Collapsed;
-            cookieStatus.Text = saved ? "当前账号的 Cookie 已加密保存在本机。" : "当前账号尚未保存 Cookie。";
-        });
         var passwordLogin = Button("密码登录并读取课程", async () =>
         {
             await backend.Call("setValue", ["common", "use_cookies", "false"]);
@@ -98,23 +80,39 @@ public sealed partial class MainWindow
         passwordForm.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         passwordForm.Children.Add(user); passwordForm.Children.Add(password); passwordForm.Children.Add(passwordLogin);
         Grid.SetColumn(password, 1); Grid.SetColumn(passwordLogin, 2);
-        var clearCookie = Button("清除已保存 Cookie…", async () =>
+        var clearCookie = Button("清除 Cookie…", async () =>
         {
             if (await Confirm("清除 Cookie？", "清除当前账号的本机会话，下次使用需要重新登录。", "清除 Cookie"))
                 await Call("fileAction", "clear_cookie");
         }, true);
-        clearCookie.VerticalAlignment = VerticalAlignment.Bottom;
-        refreshers.Add(() => clearCookie.IsEnabled = !Busy && J.B(Summary, "cookie"));
+        var cookieStatus = Text("未保存 Cookie", 12, true);
+        cookieStatus.VerticalAlignment = VerticalAlignment.Center;
+        var importCookie = Button("导入 Cookie…", () => FileAction("fileAction", ["import_cookie"], false, "txt"), true);
+        var browserLogin = Button("浏览器登录并读取课程", async () => await Call("browserLogin"), true);
+        var accentStyle = (Style)Application.Current.Resources["AccentButtonStyle"];
+        savedCookieLogin.Style = accentStyle;
+        refreshers.Add(() =>
+        {
+            bool saved = J.B(Summary, "cookie");
+            savedCookieLogin.Visibility = clearCookie.Visibility = saved ? Visibility.Visible : Visibility.Collapsed;
+            cookieStatus.Visibility = saved ? Visibility.Collapsed : Visibility.Visible;
+            if (saved) browserLogin.ClearValue(FrameworkElement.StyleProperty);
+            else browserLogin.Style = accentStyle;
+        });
         var accountActions = Row(add, remove);
         accountActions.VerticalAlignment = VerticalAlignment.Bottom;
+        var loginHeading = Text("登录方式", 16);
+        AutomationProperties.SetHeadingLevel(loginHeading, AutomationHeadingLevel.Level2);
+        returnToCourses = Button("返回我的课程 →", () => { ShowCourseView(true); return Task.CompletedTask; });
+        returnToCourses.Visibility = Visibility.Collapsed;
         var accountCard = Card(Column(StretchRow(accounts, accountActions),
-            Row(Button("浏览器登录并读取课程", async () => await Call("browserLogin"), true),
-                Button("离线演示", async () => await Call("loadDemo"), true), cancelLogin),
-            passwordForm,
-            cookieEntry,
+            StretchRow(label, saveNote),
             new Border { Height = 1, Background = ThemeBrush("BorderBrush"), Margin = new Thickness(0, 6, 0, 6) },
-            Text("账号管理", 16), noteTarget, Row(label, saveNote, clearCookie),
-            BoundToggle("启动时使用已保存会话登录", "desktop", "auto_login")));
+            loginHeading,
+            Row(browserLogin, Button("离线演示", async () => await Call("loadDemo"), true), cancelLogin),
+            passwordForm,
+            Row(savedCookieLogin, cookieStatus, importCookie, clearCookie),
+            StretchRow(BoundToggle("启动时使用已保存会话登录", "desktop", "auto_login"), returnToCourses)));
         accountCard.MaxWidth = 880;
         accountCard.HorizontalAlignment = HorizontalAlignment.Center;
         accountCard.VerticalAlignment = VerticalAlignment.Center;
@@ -126,13 +124,8 @@ public sealed partial class MainWindow
         void FitAccountCard() => accountCard.Width = Math.Min(880, Math.Max(0, accountScroll.ActualWidth - 20));
         accountScroll.SizeChanged += (_, _) => FitAccountCard();
         FitAccountCard();
-        accountConnectionCard = accountCard;
         var accountPage = new Grid();
         accountPage.Children.Add(accountScroll);
-        returnToCourses = Button("返回我的课程 →", () => { ShowCourseView(true); return Task.CompletedTask; });
-        returnToCourses.HorizontalAlignment = HorizontalAlignment.Right;
-        returnToCourses.Visibility = Visibility.Collapsed;
-        ((StackPanel)accountCard.Child).Children.Add(returnToCourses);
         courseCount = Text("", 16);
         var search = new TextBox { PlaceholderText = "搜索课程名称或 ID", Width = 210 };
         AutomationProperties.SetName(search, "搜索课程");
@@ -153,8 +146,8 @@ public sealed partial class MainWindow
         emptyCourses = Text("", 16, true);
         emptyCourses.HorizontalAlignment = HorizontalAlignment.Center; emptyCourses.VerticalAlignment = VerticalAlignment.Center;
         var courseArea = new Grid(); courseArea.Children.Add(courses); courseArea.Children.Add(emptyCourses);
-        selectedText = Text("已选择 0 门课程", 16); selectedText.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
-        var hint = Text("", 12); hint.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 184, 200, 223));
+        selectedText = Text("已选择 0 门课程", 16);
+        var hint = Text("", 12, true);
         var start = Button("开始所选课程", async () => await Call("startTasks"), false, "#2563EB");
         refreshers.Add(() =>
         {
@@ -165,10 +158,15 @@ public sealed partial class MainWindow
             hint.Text = hidden > 0 ? $"含 {hidden} 门被搜索隐藏的已选课程" : "";
             hint.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
         });
-        var bottom = new Border { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 23, 44, 75)), CornerRadius = new CornerRadius(12), Padding = new Thickness(18), Child = StretchRow(Column(selectedText, hint), Row(Button("查看本轮策略", async () => await ShowText("本轮策略摘要", J.S(backend.State, "strategySummary"))), start)) };
+        var selection = Column(selectedText, hint);
+        selection.Spacing = 4;
+        selection.VerticalAlignment = VerticalAlignment.Center;
+        var courseActions = Row(Button("查看本轮策略", async () => await ShowText("本轮策略摘要", J.S(backend.State, "strategySummary"))), start);
+        courseActions.VerticalAlignment = VerticalAlignment.Center;
+        var bottom = Card(StretchRow(selection, courseActions));
         var accountName = Text("", 13, true);
         refreshers.Add(() => accountName.Text = J.B(Summary, "demo") ? "示例课程" : "当前账号：" + (accounts.SelectedItem is AccountItem active ? active.Display : "已连接"));
-        var courseHeader = StretchRow(accountName, Row(Button("← 账号管理 / 切换账号", () => { ShowCourseView(false); return Task.CompletedTask; }, true), Button("重新读取课程", async () => await Call("fetchCourses"), true)));
+        var courseHeader = StretchRow(accountName, Row(Button("← 账号管理", () => { ShowCourseView(false); return Task.CompletedTask; }, true), Button("重新读取课程", async () => await Call("fetchCourses"), true)));
         var grid = new Grid { RowSpacing = 14 };
         foreach (var height in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto }) grid.RowDefinitions.Add(new RowDefinition { Height = height });
         FrameworkElement[] rows2 = [courseHeader, toolbar, courseArea, bottom];
