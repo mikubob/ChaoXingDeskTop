@@ -151,13 +151,33 @@ def demo(channel, command):
             controlled_wait(channel, .6)
         if '练习' in task['title']:
             from types import SimpleNamespace
-            from .answers import AnswerRouter
+            from .answers import AIError, AnswerRouter, ChoiceMatch, option_pairs
+            config = command['config']
             demo_bank = [('演示题库', SimpleNamespace(_query=lambda q: '第二项'))]
-            if command['config']['desktop']['manual_fallback'] == 'true':
+            question = dict(id='demo-question', title='以下哪项是演示答案？', type='single', options='A.第一项\nB.第二项')
+            ai = None
+            if config['desktop']['manual_fallback'] == 'true':
                 demo_bank = []
-            router = AnswerRouter(command['config'], channel, demo_bank)
+            elif task['courseId'] in ('demo-101', 'demo-103'):
+                def bank_miss(_):
+                    bank.last_query_status = 'error'
+                    bank.last_query_reason = '请在言溪个人中心启用 AI 搜题。'
+
+                def model_answer(q):
+                    if task['courseId'] == 'demo-103':
+                        raise AIError('image_decode', 'AI 图片无法解码或转换。')
+                    return ChoiceMatch([option_pairs(q)[1]], 'letter')
+
+                config = dict(config, ai=dict(config['ai'], vision='true', check_connection='false'),
+                              desktop=dict(config['desktop'], random_fallback='true'))
+                bank = SimpleNamespace(_query=bank_miss)
+                demo_bank = [('言溪题库（模拟）', bank)]
+                ai = SimpleNamespace(query=model_answer)
+                question.update(title='求图中函数 <img src="https://formula.invalid/title.png"> 的导数。',
+                                options=[f'{key}. <img src="https://formula.invalid/{key}.png">' for key in 'ABCD'])
+            router = AnswerRouter(config, channel, demo_bank, ai)
             router.set_context(task_id=task['id'], work_id='demo-work', attempt=0)
-            router.query_all([dict(id='demo-question', title='以下哪项是演示答案？', type='single', options='A.第一项\nB.第二项')])
+            router.query_all([question])
             channel.send('discussion_result', record=dict(
                 id=task['id']+':discussion', run_id=channel.run_id, task_id=task['id'],
                 course=task['course'], chapter='章节讨论 · 离线演示',

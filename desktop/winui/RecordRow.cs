@@ -62,7 +62,7 @@ public sealed class RecordRow : INotifyPropertyChanged
         else if (question)
         {
             if (string.IsNullOrWhiteSpace(Title)) Title = "题干无可显示文字";
-            var answer = J.S(data, "answer");
+            var answer = QuestionAnswer(data);
             Subtitle = answer.Length > 0 ? "答案：" + answer.ReplaceLineEndings("；") : J.S(data, "reason");
             Status = string.Join(" · ", new[] { J.S(data, "stageText"), J.S(data, "sourceText") }.Where(s => s.Length > 0));
         }
@@ -79,6 +79,15 @@ public sealed class RecordRow : INotifyPropertyChanged
             }
             Subtitle = string.Join(" · ", new[] { media, J.S(data, "course"), J.S(data, "chapter"), J.S(data, "reason") }.Where(s => s.Length > 0));
         }
+    }
+
+    internal static string QuestionAnswer(JsonNode data)
+    {
+        string answer = J.S(data, "answer");
+        string letters = J.S(data, "answer_letters");
+        if (letters.Length == 0) return answer;
+        string options = string.Join("、", letters.ToCharArray());
+        return answer.Length > 0 ? options + " · " + answer : options;
     }
 
     private static string MediaTime(JsonNode? media, string key)

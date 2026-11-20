@@ -1,6 +1,7 @@
 """Incremental bounded question history; filters do not copy the retained data."""
 import json
 import math
+import re
 from collections import Counter
 from .providers import PROVIDERS
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QSortFilterProxyModel
@@ -14,7 +15,7 @@ STRINGS = ('id', 'run_id', 'task_id', 'work_id', 'question_id', 'attempt', 'titl
            'kind', 'stage', 'source', 'reason', 'answer', 'match_mode')
 NUMBERS = ('query_attempts', 'candidates', 'requests', 'retries', 'elapsed_ms')
 OPTIONAL_NUMBERS = ('ai_requests', 'ai_retries', 'ai_elapsed_ms', 'manual_elapsed_ms', 'total_elapsed_ms')
-FIELDS = frozenset(STRINGS + NUMBERS + OPTIONAL_NUMBERS + ('attempts', 'score'))
+FIELDS = frozenset(STRINGS + NUMBERS + OPTIONAL_NUMBERS + ('attempts', 'score', 'answer_letters'))
 
 
 def valid_record(record):
@@ -23,6 +24,9 @@ def valid_record(record):
     if not all(isinstance(record.get(k), str) and len(record[k]) <= 1200 for k in STRINGS):
         return False
     if not record['id'] or record['stage'] not in STAGES:
+        return False
+    letters = record.get('answer_letters', '')
+    if not isinstance(letters, str) or not re.fullmatch(r'[A-Z]{0,26}', letters):
         return False
     if not all(type(record.get(k)) is int and 0 <= record[k] <= 10**9 for k in NUMBERS):
         return False

@@ -56,7 +56,7 @@ SCHEMA = {
         field("服务地址", "ai", "endpoint", hint="https://服务地址/v1"),
         field("API Key", "ai", "key", "secret"),
         field("模型名称", "ai", "model"),
-        field("模型支持图片识别", "ai", "vision", "bool", hint="关闭后，图片题留待人工处理。"),
+        field("启用 AI 图片识别", "ai", "vision", "bool", hint="发送章节测验图片前，会显示目标 AI 服务和图片范围供你确认。"),
         field("首次使用前检查连接", "ai", "check_connection", "bool"),
         field("每次操作 AI 请求硬上限", "ai", "request_limit", "integer", 0, 100000,
               hint="0 表示不设整轮上限；课程运行共享测验、讨论和活动预算，连接检查和预览分别计为一次操作。重试也计数。"),

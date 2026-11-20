@@ -1038,8 +1038,8 @@ class Chaoxing:
                 answers = list(answers) + [None] * (total_questions - len(answers))
                 answers = answers[:total_questions]
 
+            from chaoxing_desktop.query_result import safe_text
             for q, res in zip(questions["questions"], answers):
-                logger.debug(f"当前题目信息 -> {q}")
                 answer = ""
                 # Redo/reused page objects must never retain stale blank values.
                 if q['type'] == 'completion':
@@ -1076,7 +1076,7 @@ class Chaoxing:
                         answer = ""
                         q[f'answerSource{q["id"]}'] = "missing"
                     else:
-                        logger.info(f"成功获取到答案：{answer}")
+                        logger.info(f'成功获取到答案：{safe_text(answer, image_placeholder="[图片]")}')
                         filled_answers += 1
                         if q.get("desktop_answer_source") == "random":
                             q[f'answerSource{q["id"]}'] = "random"
@@ -1086,7 +1086,7 @@ class Chaoxing:
                             found_answers += 1
                 # 填充答案
                 q["answerField"][f'answer{q["id"]}'] = answer if q['type'] != 'completion' or q.get('completion_fields') == [f'answer{q["id"]}'] else ''
-                logger.info(f'{q["title"]} 填写答案为 {answer}')
+                logger.info(f'{safe_text(q["title"], image_placeholder="[图片]")} 填写答案为 {safe_text(answer, image_placeholder="[图片]")}')
             cover_rate = (found_answers / total_questions) * 100
             logger.info(f"章节检测题库覆盖率： {cover_rate:.0f}%")
             if random_answers:

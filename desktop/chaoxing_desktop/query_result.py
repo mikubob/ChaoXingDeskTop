@@ -4,7 +4,7 @@ import copy
 import re
 import time
 from types import SimpleNamespace
-from .text import plain_text
+from .text import plain_text, question_parts
 
 QUERY_STATES = {'hit', 'miss', 'auth_error', 'quota_error', 'rate_limited',
                 'timeout', 'network_error', 'protocol_error', 'service_error', 'budget_exhausted'}
@@ -115,11 +115,12 @@ def query_bank(name, bank, question):
                            int(vars(bank).get('query_requests', 0)), int(vars(bank).get('query_retries', 0)))
 
 
-def safe_text(value, redactor=lambda text: text, limit=1200):
-    text = plain_text(value)
+def safe_text(value, redactor=lambda text: text, limit=1200, image_placeholder=None):
+    text = (plain_text(value) if image_placeholder is None else
+            ''.join(image_placeholder if image else part for image, part in question_parts(value)))
     text = re.sub(r'data:[^\s<>]+', '[图片数据]', text, flags=re.I)
     # URLs can embed credentials in userinfo, path or query. Results need no live URLs.
-    text = re.sub(r'https?://[^\s<>\"\']+', '[链接]', text, flags=re.I)
+    text = re.sub(r'(?:https?://|(?<!\w)//(?=[\w.-]+\.))[^\s<>\"\']+', '[链接]', text, flags=re.I)
     return redactor(text)[:limit]
 
 
@@ -128,10 +129,18 @@ def safe_record(value, redactor=lambda text: text, depth=0):
         return ''
     if isinstance(value, dict):
         machine_fields = {'id', 'run_id', 'task_id', 'work_id', 'question_id', 'attempt',
-                          'stage', 'source', 'match_mode', 'kind', 'status'}
-        return {str(k)[:64]: (safe_text(v, limit=1200) if k in machine_fields and isinstance(v, str)
-                             else safe_record(v, redactor, depth + 1))
-                for k, v in list(value.items())[:32]}
+                          'stage', 'source', 'match_mode', 'kind', 'status', 'answer_letters'}
+        question_fields = {'title', 'options', 'answer', 'candidate', 'returned_title'}
+        result = {}
+        for key, item in list(value.items())[:32]:
+            if isinstance(item, str) and key in machine_fields:
+                clean = safe_text(item)
+            elif isinstance(item, str) and key in question_fields:
+                clean = safe_text(item, redactor, image_placeholder='[图片]')
+            else:
+                clean = safe_record(item, redactor, depth + 1)
+            result[str(key)[:64]] = clean
+        return result
     if isinstance(value, (list, tuple)):
         return [safe_record(v, redactor, depth + 1) for v in value[:16]]
     if isinstance(value, (bool, int, float)) or value is None:

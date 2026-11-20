@@ -29,10 +29,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Dependency verification failed' }
           .venv-ci/Scripts/python.exe -m pip check
           if ($LASTEXITCODE -ne 0) { throw 'Dependency conflicts' }
-      - name: 验证顺序解锁课程的调度
+      - name: 运行桌面离线单元测试
         shell: pwsh
         working-directory: desktop
-        run: .venv-ci/Scripts/python.exe -m unittest discover -s tests -p test_ordered_chapters.py -v
+        run: .venv-ci/Scripts/python.exe -m unittest discover -s tests -v
       - name: Build native WinUI 3 frontend
         shell: pwsh
         working-directory: desktop

@@ -197,8 +197,16 @@ public sealed partial class MainWindow : Window
                 !taskRows.Any(row => row.Subtitle.Contains("音频 · 1:15 / 1:15")))
                 throw new InvalidOperationException("章节任务未显示视频或音频时长。");
             var questions = resultLists["questions"].Items.OfType<RecordRow>().ToArray();
-            if (questions.Length != demoCourses || questions.Any(row => row.Subtitle != "答案：第二项"))
+            if (questions.Length != demoCourses || !questions.Any(row => row.Subtitle == "答案：B · 第二项"))
                 throw new InvalidOperationException("逐题结果未显示离线题目的答案。");
+            var formula = questions.Single(row => J.S(row.Data, "source") == "ai");
+            var random = questions.Single(row => J.S(row.Data, "source") == "random");
+            var detail = QuestionDetailText((await backend.Call("questionDetail", [J.S(random.Data, "id")]))!);
+            if (formula.Subtitle != "答案：B · [图片]" || !random.Subtitle.EndsWith(" · [图片]") ||
+                !detail.Contains("D. [图片]") || !detail.Contains("请在言溪个人中心启用 AI 搜题。") ||
+                !detail.Contains("AI 图片无法解码或转换。") || detail.Contains("formula.invalid") ||
+                detail.Contains("未采用"))
+                throw new InvalidOperationException("公式图片题未显示采用编号与服务记录。");
             SetQuestionScope(J.S(questions[0].Data, "task_id"));
             await WaitFor(() => resultLists["questions"].Items.Count == 1);
             SetQuestionScope("");

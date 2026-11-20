@@ -1,8 +1,8 @@
 # 桌面版使用与开发指南
 
-**版本：0.6.2** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
+**版本：0.6.3** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
 
-[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.2) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.3) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 本文中的命令默认在 `desktop` 目录的 PowerShell 中执行。
 
@@ -134,19 +134,19 @@ python -m venv .venv-build
 ### 构建程序
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.2/ChaoxingDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.3/ChaoxingDesktop
 ```
 
 构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后发布自包含 WinUI 3 界面，使用 PyInstaller 打包 Python 后台，并验收冻结后台与原生界面。开发机还需要 .NET 8 SDK。
 
-程序输出至 `dist/release-0.6.2/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
+程序输出至 `dist/release-0.6.3/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
 
 先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与冻结后台和原生界面的验收标记，因此必须先完成带 GUI 验收的构建：
 
 ```powershell
-.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.2/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
+.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.3/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
 ```
 
 `--compiler` 指向本机的 `makensis.exe`（[NSIS 下载](https://nsis.sourceforge.io/Download)），相对路径以 `desktop` 为基准；`--app` 默认不推断，必须显式给出已验收的程序目录，`--output` 默认写入项目根目录的 `release/`。仓库内 `desktop/build/` 下的 NSIS 与 .NET SDK 属本机工具，不进入源码包，也不随安装包分发。
@@ -154,9 +154,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDir
 产物默认写入项目根目录的 `release/`：
 
 ```text
-ChaoxingDesktop-0.6.2-Setup-win-x64.exe
-ChaoxingDesktop-0.6.2-source.zip
-ChaoxingDesktop-0.6.2-installer-SHA256.json
+ChaoxingDesktop-0.6.3-Setup-win-x64.exe
+ChaoxingDesktop-0.6.3-source.zip
+ChaoxingDesktop-0.6.3-installer-SHA256.json
 ```
 
 安装包包含完整程序、对应源码 ZIP、许可和第三方声明。生成安装包前会核对程序版本、源码与产物哈希，以及冻结后台和原生界面的验收标记。用于正式发布的构建须完成原生界面验收。修改构建输入后，需要重新构建和验收。

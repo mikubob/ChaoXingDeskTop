@@ -586,7 +586,7 @@ public sealed partial class MainWindow
             if (text.Length == 0) text = kind == "discussions" ? DiscussionDetailText(record) : DetailText(record);
         }
         string title = J.S(row, "title");
-        var dialog = Dialog(string.IsNullOrWhiteSpace(title) ? "记录详情" : title, ReadOnlyBody(text));
+        var dialog = Dialog(kind == "questions" ? "逐题详情" : string.IsNullOrWhiteSpace(title) ? "记录详情" : title, ReadOnlyBody(text));
         if (kind == "questions")
         {
             dialog.SecondaryButtonText = "复制详情";
@@ -596,6 +596,7 @@ public sealed partial class MainWindow
                 var package = new DataPackage();
                 package.SetText(text);
                 Clipboard.SetContent(package);
+                dialog.SecondaryButtonText = "已复制";
             };
         }
         else
@@ -624,12 +625,12 @@ public sealed partial class MainWindow
         if (record is not JsonObject detail || detail.Count == 0)
             return "该记录已被清除或淘汰。\n\n该条逐题记录已被容量上限淘汰，无法再读取详情。可重新运行该章节获得新的记录，或到「需处理」查看本轮未决原因。";
         string title = J.S(detail, "title");
-        string answer = J.S(detail, "answer");
+        string answer = RecordRow.QuestionAnswer(detail);
         string source = J.S(detail, "sourceText");
         if (source.Length == 0) source = J.S(detail, "source");
         return (string.IsNullOrWhiteSpace(title) ? "题干无可显示文字" : title) +
             "\n\n选项：\n" + J.S(detail, "options") +
-            "\n\n采用答案：\n" + (answer.Length > 0 ? answer : "未采用") +
+            "\n\n采用答案：\n" + (answer.Length > 0 ? answer : J.S(detail, "stage") == "resolved" ? "已采用" : "未采用") +
             "\n原因：" + J.S(detail, "reason") +
             "\n来源：" + (source.Length > 0 ? source : "待处理") +
             "\n匹配：" + MatchText(J.S(detail, "match_mode")) +

@@ -73,7 +73,8 @@ ColumnLayout {
                 width: parent.width; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText
                 color: "#17243a"; font.pixelSize: 13
                 text: (pane.selected.title || "该记录已被清除或淘汰") + "\n\n选项：\n" + (pane.selected.options || "") +
-                      "\n\n采用答案：\n" + (pane.selected.answer || "未采用") + "\n原因：" + (pane.selected.reason || "") +
+                      "\n\n采用答案：\n" + (pane.selected.answer_letters ? pane.selected.answer_letters.split("").join("、") + " · " : "") +
+                      (pane.selected.answer || (pane.selected.stage === "resolved" ? "已采用" : "未采用")) + "\n原因：" + (pane.selected.reason || "") +
                       "\n来源：" + (pane.selected.sourceText || "待处理") + "\n匹配：" + (({exact: "原文匹配", format: "格式等价", fuzzy: "相似选项", memory: "本轮缓存", letter: "选项编号"})[pane.selected.match_mode] || "答案格式核验") +
                       "\n耗时：题库 " + (pane.selected.elapsed_ms || 0) + " ms；AI " + (pane.selected.ai_elapsed_ms || 0) + " ms；人工 " + (pane.selected.manual_elapsed_ms || 0) + " ms" +
                       "\nAI 请求 " + (pane.selected.ai_requests || 0) + " 次，重试 " + (pane.selected.ai_retries || 0) + " 次" +

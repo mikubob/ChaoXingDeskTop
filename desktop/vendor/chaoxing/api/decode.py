@@ -7,6 +7,7 @@
 """
 import json
 import re
+from html import escape
 from urllib.parse import unquote, urlsplit
 from typing import List, Dict, Tuple, Any, Optional
 
@@ -671,7 +672,7 @@ def _extract_title(element, font_decoder=None) -> str:
             content.append(item.string or "")
         elif item.name == "img":
             img_url = item.get("src", "")
-            content.append(f'<img src="{img_url}">')
+            content.append(f'<img src="{escape(img_url, quote=True)}">')
 
     raw_content = "".join(content)
     cleaned_content = raw_content.replace("\r", "").replace("\t", "").replace("\n", "")
@@ -688,13 +689,16 @@ def _extract_choices(element, font_decoder=None) -> str:
     if not element:
         return ""
 
-    # 提取aria-label属性值作为选项，解决#474
+    # 纯文字沿用 aria-label；含图时保留 DOM 中的图文顺序。
     choice = element.get("aria-label")
-    if choice:
-        images = "".join(str(image) for image in element.find_all("img"))
-    else:
+    if element.find("img"):
+        visible = _extract_title(element).strip()
+        label = re.match(r"^\s*([A-Za-z])(?:[.、．:：\s]|$)", choice or "")
+        if label and not re.match(rf"^{label[1]}(?:[.、．:：\s<]|$)", visible, re.I):
+            visible = f"{label[1]}. " + visible
+        choice = visible
+    elif not choice:
         choice = _extract_title(element)
-        images = ""
     if not choice:
         return ""
 
@@ -707,4 +711,4 @@ def _extract_choices(element, font_decoder=None) -> str:
     if cleaned_content.endswith("选择"):
         cleaned_content = cleaned_content[:-2].rstrip()
 
-    return cleaned_content + images
+    return cleaned_content

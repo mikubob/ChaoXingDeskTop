@@ -84,6 +84,10 @@ def query_title_variants(title, limit=2):
     return variants[:limit]
 
 
+class ImageTooLarge(ValueError):
+    pass
+
+
 class ImageEncoder:
     MAX_BYTES = 8 * 1024 * 1024
     MAX_CACHE_BYTES = 16 * 1024 * 1024
@@ -96,17 +100,25 @@ class ImageEncoder:
     def download(self, url):
         from .http import service_request
         origin = urlparse(url)
-        response = service_request(self, 'get', url, max_bytes=self.MAX_BYTES, headers={
-            'Referer': f'{origin.scheme}://{origin.netloc}/',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-        }, timeout=(10, self.timeout), stream=True)
+        import requests
+        try:
+            response = service_request(self, 'get', url, max_bytes=self.MAX_BYTES, headers={
+                'Referer': f'{origin.scheme}://{origin.netloc}/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+            }, timeout=(10, self.timeout), stream=True)
+        except requests.RequestException:
+            raise
+        except ValueError:
+            raise ImageTooLarge('图片文件过大') from None
         try:
             response.raise_for_status()
+            if 300 <= response.status_code < 400:
+                raise requests.HTTPError('图源发生重定向')
             parts, size = [], 0
             for chunk in response.iter_content(65536):
                 size += len(chunk)
                 if size > self.MAX_BYTES:
-                    raise ValueError('图片文件过大')
+                    raise ImageTooLarge('图片文件过大')
                 parts.append(chunk)
             return b''.join(parts)
         finally:
@@ -117,11 +129,11 @@ class ImageEncoder:
             self.cache.move_to_end(url)
             return self.cache[url]
         if url.startswith('data:image/'):
-            raw = base64.b64decode(url.split(',', 1)[1], validate=True)
+            raw = base64.b64decode(url.partition(',')[2], validate=True)
         else:
             raw = self.download(url)
         if len(raw) > self.MAX_BYTES:
-            raise ValueError('图片文件过大')
+            raise ImageTooLarge('图片文件过大')
         from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
         from PySide6.QtGui import QImageReader
         buffer = QBuffer()
@@ -129,8 +141,10 @@ class ImageEncoder:
         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
         reader = QImageReader(buffer)
         size = reader.size()
-        if not size.isValid() or size.width() * size.height() > 16_000_000:
-            raise ValueError('图片格式无效或尺寸过大')
+        if not size.isValid():
+            raise ValueError('图片格式无效')
+        if size.width() * size.height() > 16_000_000:
+            raise ImageTooLarge('图片尺寸过大')
         picture = reader.read()
         if picture.isNull():
             raise ValueError('图片无法解码')
@@ -148,7 +162,7 @@ class ImageEncoder:
             raise ValueError('图片无法转换为 PNG')
         result = 'data:image/png;base64,' + base64.b64encode(bytes(output.data())).decode('ascii')
         if len(result) > self.MAX_CACHE_BYTES:
-            raise ValueError('转换后的图片过大')
+            raise ImageTooLarge('转换后的图片过大')
         # Inline image sources can themselves be several MiB; caching them as
         # keys would bypass the cache's retained-data limit.
         if not url.startswith('data:'):

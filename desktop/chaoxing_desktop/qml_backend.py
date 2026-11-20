@@ -1964,7 +1964,8 @@ class Backend(QObject):
                                     blankCount=question.get('blank_count') if type(question.get('blank_count')) is int else 0,
                                     random=event.get("random_fallback", False))
             self.inputChanged.emit()
-            self.notify("等待人工处理，请检查题目后使用答案或跳过。", "warning")
+            self.notify("等待选择处理方式。" if self.interaction['kind'] == 'choice' else
+                        "等待人工处理，请检查题目后使用答案或跳过。", "warning")
         elif kind == "done":
             self._run_completed = True
             self.outcome = True

@@ -118,6 +118,7 @@ class TikuYanxi(Tiku):
 
     def _query_once(self, q_info: dict):
         from chaoxing_desktop.bank_question import ImageEncoder, build_yanxi_environment, restore_image_placeholders
+        from chaoxing_desktop.query_result import safe_text
         self.last_query_status, self.last_query_reason = 'error', ''
         self.last_result_question, self.last_result_options = '', None
         self.last_result_ai = False
@@ -171,12 +172,13 @@ class TikuYanxi(Tiku):
                         self.load_token()
                         logger.info('言溪查询次数不足，切换下一个 Token')
                         continue
-                preview = env['title'][:80]
+                preview = safe_text(q_info.get('title', ''), limit=80, image_placeholder='[图片]')
+                log_reason = safe_text(reason)
                 if any(word in reason + tag_text for word in ('题库没有该题', '没有该题的答案', '未找到答案', '搜不到答案', '未收录', '未命中')):
                     self.last_query_status = 'miss'
-                    logger.info(f'{self.name}未命中：{reason}；题干：{preview}')
+                    logger.info(f'{self.name}未命中：{log_reason}；题干：{preview}')
                 else:
-                    logger.warning(f'{self.name}请求错误（HTTP 200，code=0）：{reason}；题干：{preview}')
+                    logger.warning(f'{self.name}请求错误（HTTP 200，code=0）：{log_reason}；题干：{preview}')
                 return None
             self._times = data.get('times', self._times)
             answer = restore_image_placeholders(answer, image_urls)
@@ -191,7 +193,8 @@ class TikuYanxi(Tiku):
                 return answer
             self.last_query_status = 'miss'
             self.last_query_reason = '服务未返回可用答案'
-            logger.info(f'{self.name}未命中：{self.last_query_reason}；题干：{env["title"][:80]}')
+            preview = safe_text(q_info.get('title', ''), limit=80, image_placeholder='[图片]')
+            logger.info(f'{self.name}未命中：{self.last_query_reason}；题干：{preview}')
             return None
         self.last_query_reason = '所有 Token 查询次数均已用完'
         logger.warning(f'{self.name}请求错误：{self.last_query_reason}')
