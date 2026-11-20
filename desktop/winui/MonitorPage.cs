@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace ChaoxingDesktop;
@@ -586,7 +587,29 @@ public sealed partial class MainWindow
             if (text.Length == 0) text = kind == "discussions" ? DiscussionDetailText(record) : DetailText(record);
         }
         string title = J.S(row, "title");
-        var dialog = Dialog(kind == "questions" ? "逐题详情" : string.IsNullOrWhiteSpace(title) ? "记录详情" : title, ReadOnlyBody(text));
+        UIElement detailBody = ReadOnlyBody(text);
+        if (kind == "questions")
+        {
+            var imageUris = J.A(record["images"])
+                .Select(node => Uri.TryCreate(node.ToString(), UriKind.Absolute, out var uri) && uri.Scheme == "file" ? uri : null)
+                .Where(uri => uri != null)
+                .ToArray();
+            if (imageUris.Length > 0)
+            {
+                var panel = Column(Text(text), Text("题目图片（本机缓存）：", 12, true));
+                foreach (var uri in imageUris)
+                {
+                    var image = new Image { Source = new BitmapImage(uri!), MaxHeight = 220, Stretch = Stretch.Uniform };
+                    var failed = Text("图片加载失败，请在学习平台查看原题。", 12, true);
+                    failed.Visibility = Visibility.Collapsed;
+                    image.ImageFailed += (_, _) => failed.Visibility = Visibility.Visible;
+                    panel.Children.Add(image);
+                    panel.Children.Add(failed);
+                }
+                detailBody = Scroll(panel);
+            }
+        }
+        var dialog = Dialog(kind == "questions" ? "逐题详情" : string.IsNullOrWhiteSpace(title) ? "记录详情" : title, detailBody);
         if (kind == "questions")
         {
             dialog.SecondaryButtonText = "复制详情";

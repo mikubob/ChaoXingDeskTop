@@ -6,6 +6,7 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+import threading
 import unicodedata
 from urllib.parse import urljoin, urlparse
 
@@ -116,6 +117,7 @@ class ImageEncoder:
         self.timeout = timeout
         self.cache = OrderedDict()
         self.cache_bytes = 0
+        self._lock = threading.Lock()
 
     def _fetch_following_redirects(self, url, headers):
         from .http import service_request
@@ -169,9 +171,10 @@ class ImageEncoder:
             response.close()
 
     def encode(self, url):
-        if url in self.cache:
-            self.cache.move_to_end(url)
-            return self.cache[url]
+        with self._lock:
+            if url in self.cache:
+                self.cache.move_to_end(url)
+                return self.cache[url]
         if url.startswith('data:image/'):
             raw = base64.b64decode(url.partition(',')[2], validate=True)
         else:
@@ -212,10 +215,11 @@ class ImageEncoder:
         # Inline image sources can themselves be several MiB; caching them as
         # keys would bypass the cache's retained-data limit.
         if not url.startswith('data:'):
-            while self.cache and (len(self.cache) >= 64 or self.cache_bytes + len(result) > self.MAX_CACHE_BYTES):
-                self.cache_bytes -= len(self.cache.popitem(last=False)[1])
-            self.cache[url] = result
-            self.cache_bytes += len(result)
+            with self._lock:
+                while self.cache and (len(self.cache) >= 64 or self.cache_bytes + len(result) > self.MAX_CACHE_BYTES):
+                    self.cache_bytes -= len(self.cache.popitem(last=False)[1])
+                self.cache[url] = result
+                self.cache_bytes += len(result)
         return result
 
     def cached_file_uri(self, url, directory):

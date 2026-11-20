@@ -15,7 +15,7 @@ STRINGS = ('id', 'run_id', 'task_id', 'work_id', 'question_id', 'attempt', 'titl
            'kind', 'stage', 'source', 'reason', 'answer', 'match_mode')
 NUMBERS = ('query_attempts', 'candidates', 'requests', 'retries', 'elapsed_ms')
 OPTIONAL_NUMBERS = ('ai_requests', 'ai_retries', 'ai_elapsed_ms', 'manual_elapsed_ms', 'total_elapsed_ms')
-FIELDS = frozenset(STRINGS + NUMBERS + OPTIONAL_NUMBERS + ('attempts', 'score', 'answer_letters'))
+FIELDS = frozenset(STRINGS + NUMBERS + OPTIONAL_NUMBERS + ('attempts', 'score', 'answer_letters', 'images'))
 
 
 def valid_record(record):
@@ -27,6 +27,11 @@ def valid_record(record):
         return False
     letters = record.get('answer_letters', '')
     if not isinstance(letters, str) or not re.fullmatch(r'[A-Z]{0,26}', letters):
+        return False
+    images = record.get('images', [])
+    if not isinstance(images, list) or len(images) > 16 or not all(
+        isinstance(u, str) and len(u) <= 512 and u.startswith('file://') for u in images
+    ):
         return False
     if not all(type(record.get(k)) is int and 0 <= record[k] <= 10**9 for k in NUMBERS):
         return False

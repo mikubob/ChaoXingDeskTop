@@ -133,7 +133,9 @@ def safe_record(value, redactor=lambda text: text, depth=0):
         question_fields = {'title', 'options', 'answer', 'candidate', 'returned_title'}
         result = {}
         for key, item in list(value.items())[:32]:
-            if isinstance(item, str) and key in machine_fields:
+            if key == 'images' and isinstance(item, list):
+                clean = [u[:512] for u in item[:16] if isinstance(u, str) and u.startswith('file://')]
+            elif isinstance(item, str) and key in machine_fields:
                 clean = safe_text(item)
             elif isinstance(item, str) and key in question_fields:
                 clean = safe_text(item, redactor, image_placeholder='[图片]')
