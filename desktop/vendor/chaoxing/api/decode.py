@@ -684,31 +684,56 @@ def _extract_title(element, font_decoder=None) -> str:
     return cleaned_content
 
 
+def _normalize_choice_text(text: str, font_decoder=None) -> str:
+    """清理选项文本中的空白与尾部无意义提示词，并应用字体解码。"""
+    cleaned = re.sub(r"[\r\t\n]", "", text or "")
+    if font_decoder:
+        cleaned = font_decoder.decode(cleaned)
+    cleaned = cleaned.strip()
+    if cleaned.endswith("选择"):
+        cleaned = cleaned[:-2].rstrip()
+    return cleaned
+
+
+def _first_choice_text(element, font_decoder=None) -> str:
+    for item in element.descendants:
+        if isinstance(item, NavigableString):
+            text = _normalize_choice_text(item.string or "", font_decoder)
+            if text:
+                return text
+    return ""
+
+
+def _has_detached_label(element, letter: str, rest: str, aria_body: str, font_decoder=None) -> bool:
+    if aria_body and re.sub(r"\s+", "", rest).startswith(re.sub(r"\s+", "", aria_body)):
+        return True
+    first = _first_choice_text(element, font_decoder).rstrip(".、．:：")
+    return first.upper() == letter.upper()
+
+
 def _extract_choices(element, font_decoder=None) -> str:
     """提取选项内容，支持解码加密字体"""
     if not element:
         return ""
 
-    # 纯文字沿用 aria-label；含图时保留 DOM 中的图文顺序。
-    choice = element.get("aria-label")
-    if element.find("img"):
-        visible = _extract_title(element).strip()
-        label = re.match(r"^\s*([A-Za-z])(?:[.、．:：\s]|$)", choice or "")
-        if label and not re.match(rf"^{label[1]}(?:[.、．:：\s<]|$)", visible, re.I):
-            visible = f"{label[1]}. " + visible
-        choice = visible
-    elif not choice:
-        choice = _extract_title(element)
-    if not choice:
-        return ""
+    # 优先使用 aria-label；含图或 aria-label 被未转义引号截断时回退到 DOM 可见内容。
+    aria = _normalize_choice_text(element.get("aria-label"), font_decoder)
+    visible = _normalize_choice_text(_extract_title(element), font_decoder)
+    aria_compact = re.sub(r"[\s.、．:：]+", "", aria)
+    visible_compact = re.sub(r"[\s.、．:：]+", "", visible)
+    use_visible = bool(element.find("img")) or not aria or len(visible_compact) > len(aria_compact)
+    if not use_visible:
+        return aria
+    if not visible:
+        return aria
 
-    cleaned_content = re.sub(r"[\r\t\n]", "", choice)
-
-    if font_decoder:
-        cleaned_content = font_decoder.decode(cleaned_content)
-
-    cleaned_content = cleaned_content.strip()
-    if cleaned_content.endswith("选择"):
-        cleaned_content = cleaned_content[:-2].rstrip()
-
-    return cleaned_content
+    label = re.match(r"^\s*([A-Za-z])(?:[.、．:：\s]+(.*)|$)", aria or "")
+    if label:
+        letter, aria_body = label[1], (label[2] or "").lstrip()
+        if not re.match(rf"^{letter}(?:[.、．:：\s<]|$)", visible, re.I):
+            if (visible[:1].upper() == letter.upper()
+                    and _has_detached_label(element, letter, visible[1:], aria_body, font_decoder)):
+                visible = f"{letter}. " + visible[1:].lstrip()
+            else:
+                visible = f"{letter}. " + visible
+    return visible
