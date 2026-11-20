@@ -66,7 +66,7 @@ public sealed partial class MainWindow
         var panel = Column(Text(J.S(input, "message", "检查题干与选项，填写答案后继续。"), 12, true), Text(J.S(input, "title"), 17));
         foreach (var url in J.A(input["images"]))
         {
-            if (Uri.TryCreate(url.ToString(), UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+            if (Uri.TryCreate(url.ToString(), UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http" or "file")
             {
                 var image = new Image { Source = new BitmapImage(uri), MaxHeight = 220, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
                 var failed = Text("图片加载失败，请在学习平台查看原题。", 12, true); failed.Visibility = Visibility.Collapsed;

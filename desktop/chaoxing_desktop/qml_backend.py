@@ -1957,10 +1957,11 @@ class Backend(QObject):
                 return
             question = event.get("question", {})
             pairs = [("正确", "正确"), ("错误", "错误")] if question.get("type") == "judgement" else option_pairs(question)
+            cached_images = question.get("desktop_cached_images") or {}
             self.interaction = dict(kind=event.get("kind", "question"), type=question.get("type", "text"),
                                     message=plain_text(event.get("message", "")), title=plain_text(question.get("title", "")),
                                     options=[dict(value=k, label=plain_text(v)) for k, v in pairs],
-                                    images=question_images(question), choices=event.get("choices", []),
+                                    images=[cached_images.get(u, u) for u in question_images(question)], choices=event.get("choices", []),
                                     blankCount=question.get('blank_count') if type(question.get('blank_count')) is int else 0,
                                     random=event.get("random_fallback", False))
             self.inputChanged.emit()

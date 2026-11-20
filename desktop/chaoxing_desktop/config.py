@@ -69,7 +69,7 @@ def defaults() -> configparser.ConfigParser:
                               go_retry_backoff="1.2", likeapi_search="false", likeapi_vision="true",
                               likeapi_model="glm-4.5-air", likeapi_retry="true", likeapi_retry_times="3"),
         "ai": dict(enabled="false", provider="AI", endpoint="", key="", model="",
-                   vision="false", min_interval_seconds="3.0", http_proxy="",
+                   vision="false", image_confirm_policy="ask", min_interval_seconds="3.0", http_proxy="",
                    check_connection="true", timeout="60", retries="2", request_limit="0", token_warning="0"),
         "desktop": dict(manual_fallback="false", random_fallback="false", auto_save="true", auto_login="false"),
         "discussion": dict(enabled="false", reply_level="medium", auto_submit="false"),

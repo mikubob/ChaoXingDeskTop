@@ -163,20 +163,21 @@ class FormulaImagesTest(unittest.TestCase):
 
     def test_image_failures_and_random_retain_service_reasons(self):
         cases = [
-            (response(status=404), 'image_download'),
-            (response(content=b'not an image'), 'image_decode'),
-            (response(content=b'0' * 65), 'image_limit'),
+            (response(status=404), 'HTTPStatusError' if False else 'HTTPError'),
+            (response(content=b'not an image'), 'ValueError'),
+            (response(content=b'0' * 65), 'ImageTooLarge'),
         ]
         self.ai.image_encoder.MAX_BYTES = 64
-        for reply, status in cases:
-            with self.subTest(status=status):
+        for reply, _ in cases:
+            with self.subTest(reply=reply.status_code):
                 self.get.side_effect = None
                 self.get.return_value = reply
+                self.post.reset_mock()
                 router = AnswerRouter(self.config, self.channel, ai=self.ai)
-                self.assertIsNone(router.query(formula()))
-                row = self.records()['123']
-                self.assertEqual((row['stage'], row['attempts'][-1]['status']), ('pending', status))
-        self.get.return_value = response(content=b'broken png')
+                self.assertEqual(router.query(formula()), f'<img src="{B_IMAGE}">')
+                content = self.post.call_args.kwargs['json']['messages'][-1]['content']
+                self.assertEqual(content[1]['image_url']['url'], TITLE)
+        bad_inline = dict(formula(), title='求 ' + image('data:image/png;base64,bm90LWEtcG5n') + ' 的导数。')
         bank = TikuYanxi()
         bank.config_set({})
         bank._tokens = ['synthetic']
@@ -185,10 +186,10 @@ class FormulaImagesTest(unittest.TestCase):
             '请在言溪个人中心启用 AI 搜题。 https://bank.invalid/private?key=internal-ai-key'}}))
         self.config['desktop']['random_fallback'] = 'true'
         router = AnswerRouter(self.config, self.channel, [('TikuYanxi', bank)], self.ai)
-        q = formula()
+        self.post.reset_mock()
         with patch('chaoxing_desktop.answers.random.choice', side_effect=lambda pairs: pairs[1]):
-            answer = router.query(q)
-        self.assertEqual(router.choice_letters(answer, q), 'B')
+            answer = router.query(bad_inline)
+        self.assertEqual(router.choice_letters(answer, bad_inline), 'B')
         row = self.records()['123']
         self.assertEqual((row['source'], row['answer_letters']), ('random', 'B'))
         self.assertIn('启用 AI 搜题', row['attempts'][0]['reason'])
@@ -246,3 +247,31 @@ class FormulaImagesTest(unittest.TestCase):
         self.assertIsNone(router.query(completion))
         self.assertIn('预期 2 空', self.records()['blank']['attempts'][-1]['reason'])
         self.get.assert_not_called()
+
+    def test_image_confirm_policy_and_redirect_and_short_stem(self):
+        from chaoxing_desktop.matching import title_similarity
+        self.assertGreater(title_similarity(f'求{image(TITLE)}', f'求 {image(TITLE)}'), 0.99)
+        plain = dict(id='text', title='这道题的答案是第二项。', options='A.第一项\nB.第二项', type='single')
+        self.config['ai']['image_confirm_policy'] = 'always_skip'
+        self.channel.ask.reset_mock()
+        self.post.reset_mock()
+        self.set_reply('{"Answer":["第二项"]}')
+        router = AnswerRouter(self.config, self.channel, ai=self.ai)
+        self.assertEqual(router.query_all([formula(), plain]), [None, '第二项'])
+        self.channel.ask.assert_not_called()
+        self.post.assert_called_once()
+        self.config['ai']['image_confirm_policy'] = 'always_allow'
+        self.channel.ask.reset_mock()
+        self.post.reset_mock()
+        self.set_reply('{"Answer":["B"]}')
+        redirect = response(status=302)
+        redirect.headers['Location'] = B_IMAGE
+        self.get.side_effect = [
+            redirect, response(content=self.images[B_IMAGE]),
+            response(status=403), response(content=self.images[A_IMAGE]),
+            response(content=self.images[B_IMAGE]),
+        ]
+        router = AnswerRouter(self.config, self.channel, ai=self.ai)
+        self.assertEqual(router.query(formula()), f'<img src="{B_IMAGE}">')
+        self.channel.ask.assert_not_called()
+        self.post.assert_called_once()

@@ -1,11 +1,13 @@
 """Build the text and image environment used by OCS-compatible v2 banks."""
 import base64
 from collections import OrderedDict
+import hashlib
 from html import unescape
 from html.parser import HTMLParser
+from pathlib import Path
 import re
 import unicodedata
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 def option_lines(options):
@@ -88,6 +90,24 @@ class ImageTooLarge(ValueError):
     pass
 
 
+_CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+_MIME_EXT = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp'}
+
+
+def _detect_image_mime(raw):
+    if raw.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if raw.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if raw.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if len(raw) >= 12 and raw[:4] == b'RIFF' and raw[8:12] == b'WEBP':
+        return 'image/webp'
+    if raw.startswith(b'BM') and len(raw) >= 14:
+        return 'image/bmp'
+    return ''
+
+
 class ImageEncoder:
     MAX_BYTES = 8 * 1024 * 1024
     MAX_CACHE_BYTES = 16 * 1024 * 1024
@@ -97,23 +117,47 @@ class ImageEncoder:
         self.cache = OrderedDict()
         self.cache_bytes = 0
 
-    def download(self, url):
+    def _fetch_following_redirects(self, url, headers):
         from .http import service_request
-        origin = urlparse(url)
         import requests
-        try:
-            response = service_request(self, 'get', url, max_bytes=self.MAX_BYTES, headers={
-                'Referer': f'{origin.scheme}://{origin.netloc}/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-            }, timeout=(10, self.timeout), stream=True)
-        except requests.RequestException:
-            raise
-        except ValueError:
-            raise ImageTooLarge('图片文件过大') from None
+        current = url
+        for _ in range(4):
+            try:
+                response = service_request(self, 'get', current, max_bytes=self.MAX_BYTES, headers=headers,
+                                           timeout=(10, self.timeout), stream=True)
+            except requests.RequestException:
+                raise
+            except ValueError:
+                raise ImageTooLarge('图片文件过大') from None
+            if 300 <= response.status_code < 400:
+                location = response.headers.get('Location', '')
+                response.close()
+                if not location:
+                    raise requests.HTTPError('图源发生重定向', response=response)
+                next_url = urljoin(current, location)
+                if urlparse(next_url).scheme not in ('http', 'https'):
+                    raise requests.HTTPError('图源重定向协议无效', response=response)
+                current = next_url
+                continue
+            return response
+        raise requests.HTTPError('图源重定向次数过多')
+
+    def download(self, url):
+        origin = urlparse(url)
+        candidates = [
+            {'Referer': f'{origin.scheme}://{origin.netloc}/', 'User-Agent': _CHROME_UA},
+            {'Referer': 'https://mooc1.chaoxing.com/', 'User-Agent': _CHROME_UA},
+            {'User-Agent': _CHROME_UA},
+        ]
+        response = None
+        for index, headers in enumerate(candidates):
+            response = self._fetch_following_redirects(url, headers)
+            if response.status_code == 403 and index + 1 < len(candidates):
+                response.close()
+                continue
+            break
         try:
             response.raise_for_status()
-            if 300 <= response.status_code < 400:
-                raise requests.HTTPError('图源发生重定向')
             parts, size = [], 0
             for chunk in response.iter_content(65536):
                 size += len(chunk)
@@ -134,33 +178,35 @@ class ImageEncoder:
             raw = self.download(url)
         if len(raw) > self.MAX_BYTES:
             raise ImageTooLarge('图片文件过大')
-        from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
-        from PySide6.QtGui import QImageReader
-        buffer = QBuffer()
-        buffer.setData(QByteArray(raw))
-        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-        reader = QImageReader(buffer)
-        size = reader.size()
-        if not size.isValid():
-            raise ValueError('图片格式无效')
-        if size.width() * size.height() > 16_000_000:
-            raise ImageTooLarge('图片尺寸过大')
-        picture = reader.read()
-        if picture.isNull():
-            raise ValueError('图片无法解码')
-        if max(picture.width(), picture.height()) > 2000:
-            picture = picture.scaled(2000, 2000, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        if min(picture.width(), picture.height()) < 256:
-            factor = 256 / min(picture.width(), picture.height())
-            # Keep exceptionally long formula images bounded as well.
-            factor = min(factor, 2000 / max(picture.width(), picture.height()))
-            if factor > 1:
-                picture = picture.scaled(round(picture.width() * factor), round(picture.height() * factor), Qt.AspectRatioMode.KeepAspectRatio)
-        output = QBuffer()
-        output.open(QIODevice.OpenModeFlag.WriteOnly)
-        if not picture.save(output, 'PNG'):
-            raise ValueError('图片无法转换为 PNG')
-        result = 'data:image/png;base64,' + base64.b64encode(bytes(output.data())).decode('ascii')
+        mime = _detect_image_mime(raw)
+        if mime:
+            result = f'data:{mime};base64,' + base64.b64encode(raw).decode('ascii')
+        else:
+            # 非常见位图格式时按需尝试 Qt 解码，无 PySide6 环境直接按格式无效处理。
+            try:
+                from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
+                from PySide6.QtGui import QImageReader
+            except ImportError:
+                raise ValueError('图片格式无效') from None
+            buffer = QBuffer()
+            buffer.setData(QByteArray(raw))
+            buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+            reader = QImageReader(buffer)
+            size = reader.size()
+            if not size.isValid():
+                raise ValueError('图片格式无效')
+            if size.width() * size.height() > 16_000_000:
+                raise ImageTooLarge('图片尺寸过大')
+            picture = reader.read()
+            if picture.isNull():
+                raise ValueError('图片无法解码')
+            if max(picture.width(), picture.height()) > 2000:
+                picture = picture.scaled(2000, 2000, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            output = QBuffer()
+            output.open(QIODevice.OpenModeFlag.WriteOnly)
+            if not picture.save(output, 'PNG'):
+                raise ValueError('图片无法转换为 PNG')
+            result = 'data:image/png;base64,' + base64.b64encode(bytes(output.data())).decode('ascii')
         if len(result) > self.MAX_CACHE_BYTES:
             raise ImageTooLarge('转换后的图片过大')
         # Inline image sources can themselves be several MiB; caching them as
@@ -171,6 +217,23 @@ class ImageEncoder:
             self.cache[url] = result
             self.cache_bytes += len(result)
         return result
+
+    def cached_file_uri(self, url, directory):
+        """将已缓存（或可下载）的图片落盘到临时目录供原生界面显示，失败返回空串。"""
+        try:
+            data_url = self.encode(url)
+        except Exception:
+            return ''
+        header, _, payload = data_url.partition(',')
+        mime = header.removeprefix('data:').partition(';')[0].lower()
+        ext = _MIME_EXT.get(mime, '.png')
+        target_dir = Path(directory)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(url.encode('utf-8')).hexdigest()[:24]
+        target = target_dir / f'{digest}{ext}'
+        if not target.exists():
+            target.write_bytes(base64.b64decode(payload))
+        return target.as_uri()
 
 
 def build_yanxi_environment(question, encoder, warning=lambda message: None):

@@ -84,7 +84,9 @@ def title_similarity(left, right):
     a, b = clean_title(display_text(left)), clean_title(display_text(right))
     if canonical(a) == canonical(b) and signature(a) == signature(b):
         return 1.0
-    if min(len(canonical(a)), len(canonical(b))) < 12:
+    left_images = text_with_images(a)[1]
+    same_images = bool(left_images) and left_images == text_with_images(b)[1]
+    if not same_images and min(len(canonical(a)), len(canonical(b))) < 12:
         return 0.0
     return similarity(a, b)
 

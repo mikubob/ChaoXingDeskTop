@@ -87,6 +87,7 @@ class AIClient:
         encoder = self.image_encoder
         encoder.control = control_of(self)
         encoder._http_deadline = time.monotonic() + 600
+        warning = vars(self).get('warning')
         content, encoded, text = [], {}, []
         size = 0
         for image, value in parts:
@@ -98,21 +99,22 @@ class AIClient:
                 raise AIError('image_missing', 'AI 图片缺少可读取的图源。')
             if value not in encoded:
                 try:
-                    encoded[value] = encoder.encode(value)
-                except requests.RequestException:
-                    raise AIError('image_download', 'AI 图片下载失败。') from None
-                except ImageTooLarge:
-                    raise AIError('image_limit', 'AI 图片超过大小上限。') from None
-                except ValueError:
-                    raise AIError('image_decode', 'AI 图片无法解码或转换。') from None
-            data = encoded[value]
-            size += len(data)
-            if size > encoder.MAX_CACHE_BYTES:
-                raise AIError('image_limit', 'AI 题目图片总量超过上限。')
+                    data = encoder.encode(value)
+                    if size + len(data) > encoder.MAX_CACHE_BYTES:
+                        raise ImageTooLarge('AI 题目图片总量超过上限。')
+                    encoded[value] = data
+                    size += len(data)
+                except (requests.RequestException, ImageTooLarge, ValueError) as exc:
+                    if value.startswith('data:image/'):
+                        kind = 'image_limit' if isinstance(exc, ImageTooLarge) else 'image_decode'
+                        raise AIError(kind, 'AI 图片无法解码或超过大小上限。') from None
+                    if callable(warning):
+                        warning(f'AI 图片本地转换失败（{type(exc).__name__}），降级为直接传递图片地址')
+                    encoded[value] = 'https://' + value[7:] if value.startswith('http://p.ananas.chaoxing.com/') else value
             if text:
                 content.append({'type': 'text', 'text': ''.join(text)})
                 text.clear()
-            content.append({'type': 'image_url', 'image_url': {'url': data}})
+            content.append({'type': 'image_url', 'image_url': {'url': encoded[value]}})
         if text:
             content.append({'type': 'text', 'text': ''.join(text)})
         return content
@@ -255,6 +257,10 @@ class AnswerRouter:
             self.ai.control = self.control
             if isinstance(self.ai, AIClient):
                 self.ai.attach_channel(channel)
+                self.ai.warning = lambda msg: self.channel.send('log', message=msg, level='WARNING')
+                for _, bank in self.banks:
+                    if hasattr(bank, '_image_encoder') and bank._image_encoder is None:
+                        bank._image_encoder = self.ai.image_encoder
 
     def get_submit_params(self):
         return "" if self.SUBMIT else "1"
@@ -527,15 +533,24 @@ class AnswerRouter:
                         image_counts[i] = image_count
             image_consent = False
             if image_counts and isinstance(self.ai, AIClient) and not self.ai_unavailable:
-                reason = '已跳过向 AI 发送本批图片。'
-                try:
-                    image_consent = self.ai.confirm_images(self.channel, len(image_counts), sum(image_counts.values()))
-                except (AIError, ValueError):
-                    reason = '无法确认 AI 服务地址，未发送本批图片。'
-                if not image_consent:
+                policy = str(self.config['ai'].get('image_confirm_policy', 'ask')).strip().lower()
+                if policy == 'always_allow':
+                    image_consent = True
+                elif policy == 'always_skip':
+                    reason = '已按设置始终跳过向 AI 发送图片题。'
                     for i in image_counts:
                         publish_ai(i, 'skipped', 'pending', reason)
                     ai_pending = [i for i in ai_pending if i not in image_counts]
+                else:
+                    reason = '已跳过向 AI 发送本批图片。'
+                    try:
+                        image_consent = self.ai.confirm_images(self.channel, len(image_counts), sum(image_counts.values()))
+                    except (AIError, ValueError):
+                        reason = '无法确认 AI 服务地址，未发送本批图片。'
+                    if not image_consent:
+                        for i in image_counts:
+                            publish_ai(i, 'skipped', 'pending', reason)
+                        ai_pending = [i for i in ai_pending if i not in image_counts]
             if ai_pending and self.ai and not self.ai_unavailable:
                 try:
                     if not self.checked_ai and self.config['ai']['check_connection'] == 'true':
@@ -590,11 +605,20 @@ class AnswerRouter:
                 for i in ai_pending:
                     publish_ai(i, 'skipped', 'error', 'AI 本轮停用：' + self.ai_unavailable)
             if self.config['desktop']['manual_fallback'] == 'true':
+                import tempfile
+                from pathlib import Path
+                manual_encoder = self.ai.image_encoder if isinstance(self.ai, AIClient) else next(
+                    (vars(b).get('_image_encoder') for _, b in self.banks if vars(b).get('_image_encoder') is not None), None)
+                cache_dir = Path(tempfile.gettempdir()) / 'chaoxing_desktop_images'
                 for i, question in enumerate(questions):
                     if question.get('type') == 'completion' and (layout_error(question) or type(question.get('blank_count')) is not int):
                         publish(i, 'pending', reason=layout_error(question) or '空数未知，人工答案无法映射到表单')
                         continue
                     if answers[i] is None:
+                        if manual_encoder is not None:
+                            cached = {u: uri for u in question_images(question) if (uri := manual_encoder.cached_file_uri(u, cache_dir))}
+                            if cached:
+                                question['desktop_cached_images'] = cached
                         while True:
                             checkpoint(self)
                             publish(i, 'manual', reason='等待人工补全')
