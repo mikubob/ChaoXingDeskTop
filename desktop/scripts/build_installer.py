@@ -16,13 +16,14 @@ from scripts.release_support import validate_app_tree
 from scripts.provenance import verify_build
 
 
-RETIRED_LISTS = ('retired-runtime-0.3.5.txt', 'retired-runtime-0.4.2.txt')
+RETIRED_LISTS = ('retired-runtime-0.3.5.txt', 'retired-runtime-0.4.2.txt', 'retired-runtime-0.6.5.txt')
 RETIRED_SOURCE_ARCHIVE = 'Source/ChaoxingDesktop-0.4.2-source.zip'
 
 
 def retired_runtime_files():
     """Exact old payload names; never interpret user paths or wildcards."""
-    paths = [Path(f'Source/ChaoxingDesktop-{version}-source.zip') for version in ('0.5.0', '0.6.0', '0.6.1', '0.6.2', '0.6.3', '0.6.4')]
+    paths = [Path(f'Source/ChaoxingDesktop-{version}-source.zip')
+             for version in ('0.5.0', '0.6.0', '0.6.1', '0.6.2', '0.6.3', '0.6.4', '0.6.5')]
     for name in RETIRED_LISTS:
         for line in (ROOT / 'scripts' / name).read_text(encoding='utf-8').splitlines():
             if not line or line.startswith('#'):

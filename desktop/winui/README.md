@@ -1,6 +1,6 @@
 # WinUI 3 原生界面
 
-默认入口 `desktop/run.py` 启动本目录的 C# WinUI 3 程序。窗口默认 1280 × 860 逻辑像素，最小 980 × 700，高 DPI 使用 Windows 原生缩放。「任务与日志」中的「运行日志」使用独立标签页，日志列表和操作按钮在最小窗口下也可使用。
+入口 `desktop/run.py` 启动本目录的 C# WinUI 3 程序。窗口默认 1280 × 860 逻辑像素，最小 980 × 700，高 DPI 使用 Windows 原生缩放。「任务与日志」中的「运行日志」使用独立标签页，日志列表和操作按钮在最小窗口下也可使用。
 
 主页面和页内分类采用滑动淡入动画，侧栏选中指示条连续移动；快速切换以最后选择为准，并遵循 Windows 的动画开关。账号连接与“我的课程”使用独立视图，成功读课后向右滑入课程，可返回账号管理；切换账号后重新连接。章节统计和任务状态采用绿色已核验、琥珀色待完成、红色失败。
 
@@ -35,11 +35,11 @@ python -m venv .venv
 
 `BackendClient.cs` 启动后台子进程，以继承的标准输入／输出交换 JSON 行，没有监听端口。`chaoxing_desktop/winui_bridge.py` 使用明确命令白名单、帧大小限制和合并更新，把现有业务状态与模型交给界面。文件选择、剪贴板、确认和人工补全由 WinUI 控件处理。原有 DPAPI、账号隔离、三类独立提交开关、提交确认、未知结果防重和设置验证继续在 Python 业务层执行。
 
-后台沿用 Qt Core 和现有 Python 依赖。旧 QML 界面通过 `run.py --legacy-qml` 启动。
+工作台业务状态由 `chaoxing_desktop/workbench_backend.py` 管理，设置表单和配置校验共用 `chaoxing_desktop/settings_schema.py`。
 
 ## 依赖精简
 
-前端仅引用 WinUI 组件依赖，不引入 Windows App SDK 元包中的 AI、ML、Widgets 等未使用组件。Python 后台保留 Qt Core、Network、WebSockets 与图片编解码所需的 Qt Gui；旧文件对话框延迟加载，原生后台包排除 Qt Widgets、QML、Qt Quick、浏览器和 PDF 模块。后台裁剪仅保留图片、TLS、网络信息插件，不携带窗口平台插件、样式、翻译和软件 OpenGL。OCR 引擎及 `common_old.onnx` 模型继续保留；发布前由 `scripts/release_support.py` 验收冻结后台，覆盖图片编码和 OCR。
+前端使用 Windows App SDK 的 WinUI 组件。Python 后台从 PySide6 Essentials 和 Addons 使用 Qt Core、Network、WebSockets 与图片编解码所需的 Qt Gui。冻结后台保留图片、TLS 和网络信息插件，排除 Qt Widgets、QML、Qt Quick、浏览器和 PDF 模块。交付前用 `scripts/release_support.py` 验收冻结后台的图片编码和 OCR 等能力。
 
 构建和发布应使用新的空输出目录，以免上次构建留下的可选运行库影响体积统计。
 
@@ -53,4 +53,4 @@ OCR 在媒体进度上报遇到图片验证码时按需初始化（`api/base.py`
 ./scripts/run_gui_smoke.ps1 -Executable winui/publish/ChaoxingDesktop.exe -Destination build/winui-smoke -Platform windows
 ```
 
-原生 GUI 验收使用独立 profile，不读取现有账号。结果写入 `build/winui-smoke/result.json`。服务真实连接与真实课程运行需要另行主动操作；离线验收不会请求这些服务。
+原生 GUI 验收需在交互 Windows 会话运行，并自动使用独立 profile。结果写入 `build/winui-smoke/result.json`，可用 `scripts/check_smoke_report.py` 核对是否成功并标记为 WinUI 3。离线验收使用示例课程和本地数据。

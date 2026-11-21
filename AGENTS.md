@@ -2,7 +2,7 @@
 
 ## 项目入口
 
-- `desktop/run.py` 是启动入口。默认界面为 `desktop/winui/` 下的 C# / WinUI 3 应用。旧 QML 界面仅通过 `--legacy-qml` 启动，涉及原生界面的改动在 WinUI 3 中验收。
+- `desktop/run.py` 是启动入口。界面为 `desktop/winui/` 下的 C# / WinUI 3 应用，涉及原生界面的改动在 WinUI 3 中验收。`--bridge` 和 `--worker` 启动 Python 后台。
 - `desktop/chaoxing_desktop/` 负责账号、设置、任务和业务状态，`desktop/vendor/chaoxing/` 负责平台协议适配。修改界面与后台的 JSON 行协议时，同时检查 `BackendClient.cs`、`winui_bridge.py` 和相关离线验收。
 
 ## 工作原则
@@ -43,3 +43,14 @@
 - 跨模块、数据迁移或发布等较大代码改动，在交付前安排一次复审。当前任务允许委派且子代理可用时，选用当前可用的最强审查模型进行独立复审，结合相关调用路径检查回归和验收遗漏。其余情况由主代理复查。主代理核实并修复有效问题，再复验受影响的路径。通常每轮只复审一次，修复引入新的较大改动时再定向复审。
 - 完成实质性开发、缺陷修复或验收里程碑后，在仓库根目录 `progress.txt` 追加一行，格式为 `YYYY-MM-DD HH:mm（北京时间） | 工作概要`。简述完成事项及重要的验证结果，日常尝试和中间步骤省略，已有记录原样保留。
 - 代码改动直接落到仓库，需在回复中交付代码时，先给出完整可用的修改结果。在交付说明或 PR 中简要记录主要变更及原因、实际运行的验证和待验证项，并单独指出可能影响现有功能或兼容性的改动。发布或专项验收沿用已有说明或本地验收记录。
+
+## 打包与发布
+
+- **版本与升级清理**：发布新版本前，同步更新 `desktop/chaoxing_desktop/__init__.py` 与 `desktop/winui/ChaoxingDesktop.csproj` 中的版本号，并在 `desktop/scripts/build_installer.py` 的 `retired_runtime_files()` 中补充上一版本号（保证覆盖升级时清理旧版 `Source/ChaoxingDesktop-<旧版本>-source.zip`）。先提交并推送代码，再执行打包，避免 `provenance.py` 校验失败。
+- **构建分发目录**：在 `desktop/` 下运行 `./scripts/build.ps1 -DotNet build/issue5-sdk/dotnet.exe -OutputDirectory dist/release-<版本>/ChaoxingDesktop`（系统未安装 .NET 8 SDK 时可直接使用仓库内的 `desktop/build/issue5-sdk/dotnet.exe`），完成 WinUI 3 编译、PyInstaller 冻结后台探针、原生离线冒烟与构建记录校验。
+- **生成安装包**：调用 NSIS（`C:\Program Files (x86)\NSIS\makensis.exe`）运行 `desktop/.venv-build/Scripts/python.exe desktop/scripts/build_installer.py --app desktop/dist/release-<版本>/ChaoxingDesktop --compiler "C:\Program Files (x86)\NSIS\makensis.exe" --output release`，在 `release/` 生成 `ChaoxingDesktop-<版本>-Setup-win-x64.exe`、`ChaoxingDesktop-<版本>-source.zip` 与 `ChaoxingDesktop-<版本>-installer-SHA256.json`。
+- **隔离目录验收（全新安装／覆盖升级／卸载）**：
+  - 全新安装：用 `/S /NoRegistration /NoShortcuts /D=<隔离目录>` 静默安装，核对 `ChaoxingDesktop.exe` 与 `ChaoxingWorker.exe` 版本及内嵌源码 ZIP 哈希，并通过 `desktop/scripts/run_gui_smoke.ps1` 验证安装后的主程序。
+  - 覆盖升级：在另一隔离目录先安装上一版本，记录 `installation.json` 哈希并写入测试文件；原地覆盖安装新版本后，确认 `installation.json` 哈希不变、测试文件保留、旧版源码 ZIP 已清理，再运行一次 `run_gui_smoke.ps1`。
+  - 卸载：运行 `<隔离目录>\Uninstall.exe /S`，确认主程序、后台、内嵌源码 ZIP 与卸载器均已移除，测试文件仍保留。验收完毕后清理临时目录。
+- **上传 GitHub Release**：推送 `v<版本>` 标签后，使用 `gh`（`C:\Program Files\GitHub CLI\gh.exe`，未登录时先在终端运行 `gh auth login`）将上述三个附件发布到对应 Release，再从 GitHub 回下载三个附件并核对 SHA-256 与本地清单一致。

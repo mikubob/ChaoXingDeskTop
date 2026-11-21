@@ -2,9 +2,11 @@
 
 验证码 OCR 精简：`vendor/chaoxing/api/ocr.py` 直接使用 Pillow、NumPy、ONNX Runtime CPU 完成预处理与推理，替代 ddddocr Python 运行入口。模型仍取自锁定的 ddddocr 1.6.1 wheel 的 `common_old.onnx`；`resource/ocr_charset.json` 提取自该版本 `models/charset_manager.py` 的 `_get_old_charset` 常量，顺序保持不变。项目来源 https://github.com/sml2h3/ddddocr ，MIT 许可证原文保留于 `vendor/chaoxing/resource/OCR-LICENSE.txt` 及分发依赖元数据。发行后台不包含 OpenCV；构建环境仍保留完整上游包，以提供原始模型与结果对照。
 
-桌面版：ChaoxingDesktop 0.5.0，GPL-3.0。完整许可见 LICENSE。
+桌面版：ChaoxingDesktop，GPL-3.0。完整许可见 LICENSE。
 
-0.5.0 完成 WinUI 3 原生界面迁移收尾：原生窗口经继承的 stdin/stdout 与 Python 后台交换 JSON，不监听端口、不分发浏览器；Qt Core 保留为后台控制器，旧 QML 界面仅作为 `--legacy-qml` 归档参考入口保留，发行安装包不包含 Qt Quick／QML 前端。未新增第三方代码或运行依赖，vendor 协议源码未变。
+当前源码已移除旧 QML 界面及启动入口。Python 后台直接依赖 PySide6 Essentials 和 Addons，保留 Qt Core、Network、WebSockets 和用于图片编解码的 Qt Gui。
+
+0.5.0 完成 WinUI 3 原生界面迁移收尾。原生窗口经继承的 stdin/stdout 与 Python 后台交换 JSON，安装包从该版本起采用 WinUI 前端。Qt Core 保留为后台控制器，vendor 协议源码未变。
 
 0.4.2 合入 PR #1 的独立浏览器登录，使用既有 PySide6 的 QtWebSockets 与本机 Edge / Chrome 的本地调试接口获取 Cookie；不分发浏览器，不新增第三方依赖。其余来源与许可沿用 0.4.1。
 
@@ -69,16 +71,16 @@
 第三方运行依赖及各自许可保留于打包依赖的 dist-info 和模块文件中。Qt/PySide6 使用其开源许可；依赖版本详见 requirements-lock.txt。本发行包由开源源码构建，未进行代码签名。
 
 PySide6_Essentials 6.12.0 的本地 METADATA 声明许可选择为 `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`。本工程采用 GPL-3.0 开源交付；GPL-3.0 文本随 LICENSE 提供。Qt for Python 源码与构建资料来源：https://code.qt.io/cgit/pyside/pyside-setup.git/ ，文档：https://doc.qt.io/qtforpython 。依赖 DLL 单独放置于 `_internal`，可与匹配版本的自行构建依赖一起使用。
-# QML 界面组件
+# 历史 QML 界面组件
 
-QML 学习工作台使用既有 PySide6 分发的 Qt Quick / Qt Quick Controls（FluentWinUI3、Basic）组件，继续遵循 Qt / PySide6 在本 GPL-3.0 项目中的许可要求。官方控件文档：<https://doc.qt.io/qt-6/qtquickcontrols-fluentwinui3.html>。
+旧 QML 学习工作台使用了 PySide6 分发的 Qt Quick / Qt Quick Controls（FluentWinUI3、Basic）组件，遵循 Qt / PySide6 在本 GPL-3.0 项目中的许可要求。官方控件文档：<https://doc.qt.io/qt-6/qtquickcontrols-fluentwinui3.html>。
 
 Web 调研参考 shadcn/ui、shadcn-admin、Tabler，QML 调研参考 zhuzichu520/FluentUI；本轮没有复制这些第三方模板源码，也没有引入第三方 FluentUI / Pro 模块。布局、页面及状态桥代码在本仓库中实现。
 
 2026-10-15 发布前清理：移除旧 Widgets 界面及其专用组件 / 验收入口，将配置持久化回归测试迁移到 QML 后端。改编的平台适配层移除未使用的签到接口、状态枚举、异常类、通知工厂和字体辅助方法；通知、媒体、验证码和字体映射资源保留。源码包使用明确的源码 / 资源范围，避免收集本机配置及临时文件。
 # 原生界面迁移补充
 
-源码默认界面采用 Microsoft Windows App SDK / WinUI 3（MIT）及 .NET 8（MIT），自包含发布时包含相应运行组件。项目固定引用 Windows App SDK `1.8.260803003` 与 Windows SDK BuildTools `10.0.26100.4654`；Windows SDK 构建工具遵循微软随包许可。Python 后台继续使用本文件所述依赖，Qt Core 用于进程、事件循环和模型；原 QML 界面仅保留作兼容参考。
+桌面界面采用 Microsoft Windows App SDK / WinUI 3（MIT）及 .NET 8（MIT），自包含发布时包含相应运行组件。项目固定引用 Windows App SDK `1.8.260803003` 与 Windows SDK BuildTools `10.0.26100.4654`。Windows SDK 构建工具遵循微软随包许可。Python 后台使用 Qt Core 管理进程、事件循环和模型。
 
 - [Windows App SDK 许可证](https://github.com/microsoft/WindowsAppSDK/blob/main/LICENSE)
 - [WinUI 许可证](https://github.com/microsoft/microsoft-ui-xaml/blob/main/LICENSE)

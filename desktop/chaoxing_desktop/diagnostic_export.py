@@ -5,7 +5,7 @@ import platform
 
 from . import __version__
 from .config import parser
-from .qml_schema import SCHEMA
+from .settings_schema import SCHEMA
 
 
 def diagnostic_config(config):

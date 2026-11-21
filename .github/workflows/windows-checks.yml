@@ -42,7 +42,6 @@ jobs:
         working-directory: desktop
         run: |
           $env:QT_QPA_PLATFORM = 'offscreen'
-          $env:QSG_RHI_BACKEND = 'software'
           .venv-ci/Scripts/python.exe run.py --smoke-test build/ci-checks/source
           $sourceSmokeExit = $LASTEXITCODE
           if (Test-Path build/ci-checks/source/result.json) { Get-Content build/ci-checks/source/result.json -Raw -Encoding UTF8 }

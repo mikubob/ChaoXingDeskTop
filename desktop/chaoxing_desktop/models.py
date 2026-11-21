@@ -24,9 +24,6 @@ class TaskModel(QAbstractListModel):
         self.indices = {}
         self.counts = Counter()
 
-    def roleNames(self):
-        return {DATA_ROLE: b"modelData"}
-
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
 
@@ -95,9 +92,6 @@ class LogModel(QAbstractListModel):
         self.timer.setSingleShot(True)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.flush)
-
-    def roleNames(self):
-        return {DATA_ROLE: b"modelData"}
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)

@@ -190,7 +190,7 @@ def validate(config: configparser.ConfigParser, login: bool = False, services: b
         raise ValueError('配置格式版本无效或来自更新版本')
     c, t, n = (config[s] for s in ("common", "tiku", "notification"))
     # One numeric contract for UI edits, INI imports and workers.
-    from .qml_schema import SCHEMA
+    from .settings_schema import SCHEMA
     fields = {(f['section'], f['key']): f for groups in SCHEMA.values() for group in groups for f in group['fields']}
     numeric = [(config[section], key, spec['low'], spec['high'], int if spec['kind'] == 'integer' else float)
                for (section, key), spec in fields.items() if spec['kind'] in ('integer', 'number')]

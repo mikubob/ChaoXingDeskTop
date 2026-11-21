@@ -2,21 +2,17 @@
 
 面向 Windows 的超星课程学习工作台，用一个桌面窗口管理账号、课程、章节任务、题库与 AI 服务，以及逐题结果和日志。
 
-**当前版本：0.6.3** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
+**版本：0.6.6** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
 
-源码默认界面为原生 **WinUI 3（C# / Windows App SDK）**，保留五页侧栏、账号面板、课程列表、设置分组及任务／日志区布局。账号、配置、凭据保护和任务协议继续使用原 Python 后台；Qt Core 保留用于后台进程和模型，不创建 QML 界面。旧 QML 界面仅作为归档参考实现保留，需显式使用 `--legacy-qml` 启动，不随发行版提供，也不参与安装包验收。
+桌面界面采用原生 **WinUI 3（C# / Windows App SDK）**，提供五页侧栏、账号面板、课程列表、设置分组和任务／日志区。`desktop/run.py` 启动界面，账号、配置、凭据保护和任务协议继续由 Python 后台处理。
 
 开发运行：准备 Python 环境及 .NET 8 SDK，然后在 `desktop` 中运行 `./scripts/build-winui.ps1`、`.venv/Scripts/python.exe run.py`。详见 [WinUI 3 运行与构建](desktop/winui/README.md)。
 
-[下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.3/ChaoxingDesktop-0.6.3-Setup-win-x64.exe) · [发行说明](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.3) · [使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
+[使用与构建指南](desktop/README.md) · [第三方声明](desktop/THIRD_PARTY_NOTICES.md)
 
 ## 下载与安装
 
-| 文件 | 用途 |
-| --- | --- |
-| [Windows x64 安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.3/ChaoxingDesktop-0.6.3-Setup-win-x64.exe) | 日常使用，已包含 Python 运行环境 |
-| [对应版本源码](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.3/ChaoxingDesktop-0.6.3-source.zip) | 查看实现、自行运行或构建 |
-| [SHA256 校验清单](https://github.com/mikubob/ChaoXingDeskTop/releases/download/v0.6.3/ChaoxingDesktop-0.6.3-installer-SHA256.json) | 核对安装包及源码 ZIP 的完整性 |
+每个已发布版本提供 Windows x64 安装包、该版本的源码 ZIP 和 SHA-256 校验清单。[GitHub 发行历史](https://github.com/mikubob/ChaoXingDeskTop/releases)
 
 下载并运行安装包，按提示完成安装后，从桌面或开始菜单打开「超星桌面版」。首次使用可以直接选择「离线演示」，体验界面和任务流程。
 

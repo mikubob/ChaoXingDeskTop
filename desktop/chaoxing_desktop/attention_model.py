@@ -53,9 +53,6 @@ class AttentionModel(QAbstractListModel):
         self.sizes = {}
         self.bytes = 0
 
-    def roleNames(self):
-        return {ROLE: b'modelData'}
-
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
 

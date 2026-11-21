@@ -1,8 +1,4 @@
-"""Accept a GUI smoke report only when this run produced it for the expected frontend.
-
-A leftover result.json from an earlier build, a report from the archived QML
-launcher, or a zero exit code alone must never satisfy native acceptance.
-"""
+"""检查 WinUI 3 离线冒烟报告。"""
 import argparse
 import json
 from pathlib import Path
@@ -10,7 +6,7 @@ from pathlib import Path
 NATIVE_FRONTEND = 'WinUI 3'
 
 
-def verify_smoke_report(report_path, frontend=NATIVE_FRONTEND):
+def verify_smoke_report(report_path):
     """Return the report, or raise ValueError explaining why it cannot be used."""
     path = Path(report_path)
     if not path.is_file():
@@ -22,22 +18,19 @@ def verify_smoke_report(report_path, frontend=NATIVE_FRONTEND):
     if not isinstance(report, dict) or report.get('success') is not True:
         message = report.get('message') if isinstance(report, dict) else None
         raise ValueError(message or f'GUI smoke did not succeed: {path}')
-    if frontend:
-        actual = report.get('frontend')
-        if actual != frontend:
-            raise ValueError(
-                f'GUI smoke report frontend is {actual!r}, expected {frontend!r}: {path}')
+    actual = report.get('frontend')
+    if actual != NATIVE_FRONTEND:
+        raise ValueError(
+            f'GUI smoke report frontend is {actual!r}, expected {NATIVE_FRONTEND!r}: {path}')
     return report
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('report', type=Path)
-    parser.add_argument('--frontend', default=NATIVE_FRONTEND,
-                        help='required frontend marker; empty accepts any report')
     args = parser.parse_args()
     try:
-        verify_smoke_report(args.report, args.frontend)
+        verify_smoke_report(args.report)
     except ValueError as error:
         # A CI step reads the exit code, so report the reason without a traceback.
         raise SystemExit(str(error))

@@ -54,7 +54,7 @@
 
 ## 本地记录与能力边界
 
-`activities/` 位于应用数据目录，沿用原子写入与跨进程锁。防重复键为账号 UID、课程、班级、实际单位命名空间、原生活动 ID，不含章节、轮次或策略。`intent/submitted/existing/submit_unknown/rejected` 不能因换策略解除保护。记录损坏时原样保留并阻止新提交。签名、Cookie、临时 URL 不写入草稿或 QML 事件。
+`activities/` 位于应用数据目录，沿用原子写入与跨进程锁。防重复键为账号 UID、课程、班级、实际单位命名空间、原生活动 ID，不含章节、轮次或策略。`intent/submitted/existing/submit_unknown/rejected` 不能因换策略解除保护。记录损坏时原样保留并阻止新提交。签名、Cookie、临时 URL 不写入草稿或桌面事件。
 
 基础混合问卷协议与策略有离线合成样例覆盖；复杂跳转、矩阵、排序、文件上传、未核实的其他问卷平台和旧 questionnaire 模块仍保留待处理。真实验收范围与结果另见本地验收报告，不将一项单选样例扩展为全平台兼容声明。
 

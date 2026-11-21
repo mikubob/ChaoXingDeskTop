@@ -101,9 +101,6 @@ class ActivityModel(QAbstractListModel):
         self.rows, self.indices, self.characters, self.evicted = [], {}, 0, 0
         self.stats = RecordStats()
 
-    def roleNames(self):
-        return {ROLE: b'modelData'}
-
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
 

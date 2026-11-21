@@ -1,4 +1,4 @@
-"""Declarative field metadata shared by the QML settings pages."""
+"""WinUI 设置表单、配置校验和排障导出共用的字段定义。"""
 from .config import BANK_REVIEW_POLICIES, DISCUSSION_LEVELS, ACTIVITY_CHOICES, ACTIVITY_TEXTS
 
 

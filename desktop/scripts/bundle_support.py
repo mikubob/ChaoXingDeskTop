@@ -9,9 +9,8 @@ from PyInstaller.utils.win32.versioninfo import (
 )
 
 
-def trim_bundle(binaries, datas, *, native_backend=False):
-    # Remove whole optional plugin dependency groups, preserving SVG, raster
-    # images, native Windows input, TLS and the software OpenGL fallback.
+def trim_bundle(binaries, datas):
+    # 只保留后台需要的图片、TLS 和网络插件。
     unused = {
         "qpdf.dll", "qtvirtualkeyboardplugin.dll", "qt6pdf.dll",
         "qt6virtualkeyboard.dll", "qt6virtualkeyboardqml.dll",
@@ -22,23 +21,15 @@ def trim_bundle(binaries, datas, *, native_backend=False):
         target = Path(entry[0])
         name = target.name.lower()
         parts = {part.lower() for part in target.parts}
-        if native_backend and 'numpy' in parts and name.startswith('_multiarray_tests.'):
+        if 'numpy' in parts and name.startswith('_multiarray_tests.'):
             return False  # NumPy's compiled internal test suite is not a runtime dependency.
-        if native_backend and 'pyside6' in parts:
+        if 'pyside6' in parts:
             if parts.intersection({'qml', 'qmltooling', 'translations'}):
                 return False
             if 'plugins' in parts and not parts.intersection({'imageformats', 'tls', 'networkinformation'}):
                 return False
             if name == 'opengl32sw.dll':
                 return False  # Only CPU image codecs run here; WinUI owns rendering.
-        if 'pyside6' in parts and 'qml' in parts:
-            relative = tuple(part.lower() for part in target.parts)
-            relative = relative[relative.index('qml') + 1:]
-            if relative and relative[0] not in {'qtqml', 'qtquick'}:
-                return False
-            if (len(relative) > 2 and relative[0] == 'qtquick'
-                    and relative[1] not in {'controls', 'templates', 'layouts', 'window', 'effects', 'nativestyle', 'shapes'}):
-                return False
         if 'qmltooling' in parts or name.startswith('opencv_videoio_ffmpeg'):
             return False  # No QML debugger or OpenCV video capture in the app.
         if 'ddddocr' in parts and target.suffix == '.onnx' and name != 'common_old.onnx':
@@ -60,8 +51,7 @@ def trim_bundle(binaries, datas, *, native_backend=False):
                                for attribute in ('DIRECTORY_ENTRY_IMPORT', 'DIRECTORY_ENTRY_DELAY_IMPORT')
                                for item in getattr(pe, attribute, [])}
     kept = [entry for entry in binaries if keep(entry)]
-    # QML plugins load Qt DLLs dynamically. Start with retained plugins/Python
-    # extensions, then retain their complete native dependency closure.
+    # 从保留的插件和 Python 扩展出发，保留它们依赖的 Qt DLL。
     qt_libraries = {Path(entry[0]).name.lower(): entry for entry in kept
                     if Path(entry[0]).name.lower().startswith('qt6')
                     and Path(entry[0]).suffix.lower() == '.dll'}

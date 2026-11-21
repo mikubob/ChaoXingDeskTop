@@ -1,0 +1,8 @@
+# 0.6.4 和 0.6.5 随包附带的 PySide6 元包元数据。保留实际运行依赖的许可与元数据。
+_internal/pyside6-6.12.0.dist-info/INSTALLER
+_internal/pyside6-6.12.0.dist-info/METADATA
+_internal/pyside6-6.12.0.dist-info/RECORD
+_internal/pyside6-6.12.0.dist-info/REQUESTED
+_internal/pyside6-6.12.0.dist-info/top_level.txt
+_internal/pyside6-6.12.0.dist-info/WHEEL
+_internal/pyside6-6.12.0.dist-info/licenses/LicenseRef-Qt-Commercial.txt

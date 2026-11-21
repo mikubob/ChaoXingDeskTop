@@ -1,8 +1,8 @@
 # 桌面版使用与开发指南
 
-**版本：0.6.3** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面（原 QML 界面保留为 `--legacy-qml` 参考） · GPL-3.0
+**版本：0.6.6** · Windows 10 / 11 x64 · Python 后台 + WinUI 3 原生界面 · GPL-3.0
 
-[项目首页](../README.md) · [下载安装包](https://github.com/mikubob/ChaoXingDeskTop/releases/tag/v0.6.3) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[项目首页](../README.md) · [下载已发布的安装包](https://github.com/mikubob/ChaoXingDeskTop/releases) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 本文中的命令默认在 `desktop` 目录的 PowerShell 中执行。
 
@@ -16,7 +16,7 @@
 
 安装后可通过桌面或开始菜单快捷方式启动。升级前退出旧程序，再安装到原目录；安装器保留原 `installation.json`，沿用已有设置、账号、Cookie 和凭据。卸载保留个人数据。
 
-覆盖安装时，安装器按清单移除已经停用的旧 QML 运行文件，以及 0.4.2、0.5.0、0.6.0 和 0.6.1 安装包附带的旧源码 ZIP。清理限于点名文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
+覆盖安装时，安装器按清单清理已停用的 QML 运行文件和旧版本附带的源码 ZIP。清理限于点名文件和变空的目录，保留 `installation.json`、个人数据和用户自建文件。
 
 如果使用完整程序目录，打开 `ChaoxingDesktop.exe` 即可。请保留 `_internal`、`ChaoxingWorker.exe` 及目录中的其他文件；后台组件由主程序启动。
 
@@ -116,7 +116,7 @@ python -m venv .venv
 .venv/Scripts/python.exe run.py
 ```
 
-`run.py` 是主程序入口，默认启动原生 WinUI 3 界面。首次运行前安装 .NET 8 SDK 并执行 `./scripts/build-winui.ps1`。后台进程使用 `--bridge` / `--worker` 模式，保留 Python 业务层与 Qt Core 模型；文件选择和界面渲染由 WinUI 负责。原 QML 参考界面可通过显式 `--legacy-qml` 启动。[原生界面开发与构建](winui/README.md)
+`run.py` 启动原生 WinUI 3 界面。首次运行前安装 .NET 8 SDK 并执行 `./scripts/build-winui.ps1`。后台进程使用 `--bridge` 或 `--worker`，保留 Python 业务层与 Qt Core 模型。文件选择和界面渲染由 WinUI 负责。[原生界面开发与构建](winui/README.md)
 
 ## 构建环境
 
@@ -134,29 +134,29 @@ python -m venv .venv-build
 ### 构建程序
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -OutputDirectory dist/release-0.6.3/ChaoxingDesktop
+./scripts/build.ps1 -OutputDirectory dist/local-build/ChaoxingDesktop
 ```
 
 构建脚本会准备 `.venv-build`、安装锁定依赖并核对依赖闭包，随后发布自包含 WinUI 3 界面，使用 PyInstaller 打包 Python 后台，并验收冻结后台与原生界面。开发机还需要 .NET 8 SDK。
 
-程序输出至 `dist/release-0.6.3/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
+上述命令将程序输出至 `dist/local-build/ChaoxingDesktop/`。可通过 `-Wheelhouse <绝对路径>` 使用完整的本地 wheel 目录离线安装。依赖更新需要重新生成、审阅锁文件，并在干净环境中验证。
 
 ### 生成安装包
 
 先用 `scripts/build.ps1` 构建并验收程序，再用打包脚本生成安装包（先安装 Python、.NET 8 SDK 和 NSIS）。打包脚本校验构建记录中的源码哈希、产物哈希与冻结后台和原生界面的验收标记，因此必须先完成带 GUI 验收的构建：
 
 ```powershell
-.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/release-0.6.3/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe"
+.venv-build/Scripts/python.exe scripts/build_installer.py --app dist/local-build/ChaoxingDesktop --compiler "C:/Program Files (x86)/NSIS/makensis.exe" --output build/local-installer
 ```
 
 `--compiler` 指向本机的 `makensis.exe`（[NSIS 下载](https://nsis.sourceforge.io/Download)），相对路径以 `desktop` 为基准；`--app` 默认不推断，必须显式给出已验收的程序目录，`--output` 默认写入项目根目录的 `release/`。仓库内 `desktop/build/` 下的 NSIS 与 .NET SDK 属本机工具，不进入源码包，也不随安装包分发。
 
-产物默认写入项目根目录的 `release/`：
+上述命令将产物写入 `build/local-installer/`：
 
 ```text
-ChaoxingDesktop-0.6.3-Setup-win-x64.exe
-ChaoxingDesktop-0.6.3-source.zip
-ChaoxingDesktop-0.6.3-installer-SHA256.json
+ChaoxingDesktop-<版本>-Setup-win-x64.exe
+ChaoxingDesktop-<版本>-source.zip
+ChaoxingDesktop-<版本>-installer-SHA256.json
 ```
 
 安装包包含完整程序、对应源码 ZIP、许可和第三方声明。生成安装包前会核对程序版本、源码与产物哈希，以及冻结后台和原生界面的验收标记。用于正式发布的构建须完成原生界面验收。修改构建输入后，需要重新构建和验收。

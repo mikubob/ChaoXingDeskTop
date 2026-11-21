@@ -10,8 +10,12 @@ def source_files(desktop: Path):
         "requirements-lock.txt",
         "scripts/retired-runtime-0.3.5.txt",
         "scripts/retired-runtime-0.4.2.txt",
+        "scripts/retired-runtime-0.6.5.txt",
+        "tests/test_ai_resilience.py",
+        "tests/test_decode_choices.py",
         "tests/test_formula_images.py",
         "tests/test_ordered_chapters.py",
+        "tests/test_winui_bridge.py",
         # Public compile input: ChaoxingDesktop.csproj uses it as ApplicationIcon
         # and copies it next to the executable. Only this file is added; the
         # assets filter stays SVG-only so no other binary is swept in.
@@ -25,7 +29,7 @@ def source_files(desktop: Path):
                 and path.suffix in {'.cs', '.xaml', '.csproj', '.manifest', '.md'}):
             files.append(path)
     for directory, extensions in (
-        ("chaoxing_desktop", {".py", ".qml"}),
+        ("chaoxing_desktop", {".py"}),
         ("scripts", {".py", ".ps1", ".nsi"}),
         ("assets", {".svg"}),
         ("vendor/chaoxing/api", {".py", ".md"}),

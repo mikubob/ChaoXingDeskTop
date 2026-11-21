@@ -1,20 +1,19 @@
-"""Qt Quick application state; the worker and INI contracts stay unchanged."""
+"""管理 WinUI 工作台的业务状态与后台控制器。"""
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
 import uuid
 
-from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer
-from .file_dialogs import FileDialogs as QFileDialog
+from PySide6.QtCore import QObject, Signal, Slot, QTimer
 
 from . import __version__
 from .answers import option_pairs, plain_text, question_images
 from .config import BANKS, Redactor, course_key, data_dir, defaults, is_secret, parse_text, serialize, to_payload, validate
 from .controller import Controller
-from .qml_schema import SCHEMA
+from .settings_schema import SCHEMA
 from .settings import restore_credentials, serialize_settings, settings_snapshot
-from .models import LogModel, LogFilter, TaskModel, STATUS, TERMINAL
+from .models import LogModel, LogFilter, TaskModel, TERMINAL
 from .log_store import LogStore, AsyncLogStore
 from .question_model import QuestionModel, QuestionFilter
 from .discussion_model import DiscussionModel, DiscussionFilter, safe_record as safe_discussion
@@ -33,14 +32,7 @@ from .ai_profiles import AIProfiles
 from .course_progress import CourseProgressCache, progress_key, valid_progress
 
 
-class Backend(QObject):
-    # Native frontends replace these adapters; business operations stay shared.
-    file_dialogs = QFileDialog
-
-    def copy_text(self, text):
-        from PySide6.QtGui import QGuiApplication
-        QGuiApplication.clipboard().setText(text)
-
+class WorkbenchBackend(QObject):
     changed = Signal()
     busyChanged = Signal()
     configChanged = Signal()
@@ -56,8 +48,10 @@ class Backend(QObject):
     draftOpened = Signal('QVariantMap')
     draftChanged = Signal()
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, send):
+        super().__init__()
+        self.send = send
+        self.selected_path = ""
         self.config = defaults()
         self._closed = False
         self._browser_login = None
@@ -219,39 +213,31 @@ class Backend(QObject):
             self.refresh_redactor()
         return self._redactor(str(message))
 
-    @Property(str, constant=True)
+    @property
     def version(self):
         return __version__
 
-    @Property(str, constant=True)
+    @property
     def releaseInfo(self):
         return verification_info() + '\n\n当前数据 profile：' + str(data_dir()) + '\n\n检查版本将主动打开固定的官方发行网页；不会自动下载或执行。升级前退出程序并备份 settings、accounts、Cookie、discussions、activities、run_summaries、draft_copies 和 ai_profiles.json。DPAPI 绑定原 Windows 用户与本机。回退旧程序前应核对数据格式，保留完整备份。'
 
-    @Slot(str)
+    def copy_text(self, text):
+        self.send(dict(type="clipboard", text=text))
+
     def releaseAction(self, action):
         if action == 'copy':
             self.copy_text(verification_info())
             self.feedback('release', '版本与校验说明已复制；不含账号、凭据或数据目录。', 'success')
         elif action in RELEASE_URLS:
-            from PySide6.QtGui import QDesktopServices
-            from PySide6.QtCore import QUrl
-            if not QDesktopServices.openUrl(QUrl(RELEASE_URLS[action])):
-                self.feedback('release', '未能打开系统浏览器，请稍后重试。', 'warning')
+            self.send(dict(type="openUrl", url=RELEASE_URLS[action]))
 
-    @Property("QVariantMap", constant=True)
+    @property
     def schema(self):
         return SCHEMA
 
-    @Property("QVariantMap", notify=configChanged)
+    @property
     def values(self):
         return {s: dict(self.config[s]) for s in self.config.sections()}
-
-    @Property("QVariantMap", notify=changed)
-    def state(self):
-        """Complete snapshot for tests/tools; QML uses the small summary below."""
-        return dict(self.summary, courses=self.courseRows,
-                    tasks=[dict(t, statusText=STATUS.get(t["status"], t["status"])) for t in self.tasks],
-                    logs="\n".join(self.logs), providers=self.providers)
 
     @property
     def tasks(self):
@@ -261,39 +247,38 @@ class Backend(QObject):
     def logs(self):
         return self._log_model.snapshot()
 
-    @Property(QObject, constant=True)
+    @property
     def taskModel(self):
         return self._task_model
 
-    @Property(QObject, constant=True)
+    @property
     def questionModel(self):
         return self._question_filter
 
-    @Property(QObject, constant=True)
+    @property
     def discussionModel(self):
         return self._discussion_filter
 
-    @Property('QVariantMap', notify=changed)
+    @property
     def discussionPreview(self):
         return dict(self.discussion_preview)
 
-    @Property(QObject, constant=True)
+    @property
     def activityModel(self):
         return self._activity_filter
 
-    @Property('QVariantMap', notify=changed)
+    @property
     def activityPreview(self):
         return dict(self.activity_preview)
 
-    @Property(QObject, constant=True)
+    @property
     def logModel(self):
         return self._log_filter
 
-    @Slot(str, str)
     def filterLogs(self, level, query):
         self._log_filter.set_filter(level, query)
 
-    @Property("QVariantList", notify=coursesChanged)
+    @property
     def courseRows(self):
         return [dict(c, selected=course_key(c) in self.selected,
                      progress=self._course_progress.get(progress_key(c), dict(loading=False))) for c in self.courses
@@ -394,7 +379,7 @@ class Backend(QObject):
     def course_visible(self, course):
         return not self.search or self.search.casefold() in (course["title"] + str(course["courseId"])).casefold()
 
-    @Property("QVariantMap", notify=changed)
+    @property
     def summary(self):
         hidden = sum(course_key(c) in self.selected and not self.course_visible(c) for c in self.courses) if self.search else 0
         counts = self._task_model.counts
@@ -433,15 +418,14 @@ class Backend(QObject):
                     logDirectory=self._log_directory,
                     logSaveError=self.log_save_error)
 
-    @Property(bool, notify=busyChanged)
+    @property
     def busy(self):
         return self.controller.active or self._browser_login is not None
 
-    @Property('QVariantMap', notify=changed)
+    @property
     def aiUsage(self):
         return dict(self.ai_usage)
 
-    @Slot(result='QVariantList')
     def listAiProfiles(self):
         try:
             return [dict(id=r['id'], name=r['name']) for r in AIProfiles(data_dir()).read()[0]]
@@ -449,7 +433,6 @@ class Backend(QObject):
             self.feedback('profiles', exc, 'danger')
             return []
 
-    @Slot(str, str, result=bool)
     def aiProfileAction(self, action, value):
         def run():
             if self.busy:
@@ -470,7 +453,7 @@ class Backend(QObject):
                 self.feedback('profiles', '档案已删除；当前已加载设置副本保持，可重新命名保存。', 'success')
         return self.execute(run, 'profiles')
 
-    @Property(str, notify=changed)
+    @property
     def capacityInfo(self):
         metrics = self.log_store.metrics()
         lines = ['容量只约束显示／摘要；不会删除任何未决提交意图。',
@@ -486,7 +469,6 @@ class Backend(QObject):
                       '活动意图存储容量满、记录损坏或磁盘失败会阻止新提交；不能通过清理显示解除去重。'])
         return '\n\n'.join(lines)
 
-    @Slot(str, result='QVariantMap')
     def draftAnswer(self, question_id):
         return next((dict(a) for a in self._draft['answers'] if a['question_id'] == question_id), {}) if self._draft else {}
 
@@ -498,22 +480,22 @@ class Backend(QObject):
         index = model.indices.get(record_id)
         return model.rows[index] if index is not None else None
 
-    @Property(bool, notify=changed)
+    @property
     def draftEditable(self):
         if not self._draft or self.controller.active or self._draft_sources_uncertain or self._draft_account != self.draft_account():
             return False
         source = self.draft_source(self._draft['kind'], self._draft['source']['id'])
         return bool(editable_source(self._draft['kind'], source) and fingerprint(source) == self._draft['source_hash'])
 
-    @Property(str, notify=draftChanged)
+    @property
     def draftFeedback(self):
         return self._draft_feedback
 
-    @Property(bool, notify=draftChanged)
+    @property
     def draftDirty(self):
         return self._draft_dirty
 
-    @Property(str, notify=draftChanged)
+    @property
     def draftFeedbackTone(self):
         if self._draft and (self._draft_input_errors or constraints(self._draft)):
             return 'danger'
@@ -525,7 +507,6 @@ class Backend(QObject):
             '\n'.join(errors[:100]) if errors else '本地约束通过；平台当前限制、本人状态和提交资格尚未重新核验。')
         self.draftChanged.emit()
 
-    @Slot(str, str)
     def openDraftCopy(self, kind, record_id):
         def run():
             account = self.draft_account()
@@ -547,7 +528,6 @@ class Backend(QObject):
             self.changed.emit()
         self.execute(run)
 
-    @Slot(str)
     def setDraftContent(self, text):
         if self.draftEditable and self._draft['kind'] == 'discussion':
             self.clearUiFeedback('draft')
@@ -560,7 +540,6 @@ class Backend(QObject):
             self._draft_saved = False
             self.update_draft_feedback()
 
-    @Slot(str, 'QVariantMap')
     def setDraftAnswer(self, question_id, answer):
         if not self.draftEditable or self._draft['kind'] != 'activity':
             return
@@ -585,7 +564,6 @@ class Backend(QObject):
         self._draft_saved = False
         self.update_draft_feedback()
 
-    @Slot(result=bool)
     def saveDraftCopy(self):
         def run():
             if not self.draftEditable:
@@ -599,7 +577,6 @@ class Backend(QObject):
             self.feedback('draft', '人工副本已保存到本机；未提交到平台。', 'success')
         return self.execute(run, 'draft')
 
-    @Slot(bool)
     def exportDraftCopy(self, clipboard):
         def run():
             if not self._draft or self._draft_account != self.draft_account():
@@ -611,13 +588,12 @@ class Backend(QObject):
                 self.copy_text(text)
                 self.feedback('draft', '人工编辑副本已复制，未触发提交。', 'success')
             else:
-                name, _ = self.file_dialogs.getSaveFileName(None, '导出人工编辑副本（含正文，仅供自行保管）', 'draft-copy.txt', '文本 (*.txt)')
+                name = self.selected_path
                 if name:
                     atomic_write(Path(name), text.encode('utf-8'))
                     self.feedback('draft', '编辑副本已导出，包含正文；未触发提交。', 'success')
         self.execute(run, 'draft')
 
-    @Slot(result='QVariantList')
     def listDraftCopies(self):
         try:
             rows, _ = DraftCopies(data_dir(), self.draft_account()).read() if self.draft_account() else ([], None)
@@ -626,7 +602,6 @@ class Backend(QObject):
             self.feedback('savedDrafts', exc, 'danger')
             return []
 
-    @Slot(str, int, result=bool)
     def deleteSavedDraft(self, copy_id, version):
         def run():
             if self.busy or not self.draft_account():
@@ -637,7 +612,6 @@ class Backend(QObject):
             self.feedback('savedDrafts', '人工副本已删除；原始草稿与所有防重意图保持。', 'success')
         return self.execute(run, 'savedDrafts')
 
-    @Slot(str, result=bool)
     def openSavedDraft(self, copy_id):
         def run():
             account = self.draft_account()
@@ -657,7 +631,7 @@ class Backend(QObject):
                 raise ValueError('所选副本已不存在，请重新打开列表。')
         return self.execute(run, 'savedDrafts')
 
-    @Property(str, notify=changed)
+    @property
     def aiWarning(self):
         if self.ai_usage['limit'] and self.ai_usage['requests'] >= self.ai_usage['limit']:
             return '本次操作 AI 请求已达硬上限；后续请求将留待处理。'
@@ -665,15 +639,14 @@ class Backend(QObject):
             return '服务返回 token 已达告警值，未知用量尚未计入；可暂停后续或停止。'
         return ''
 
-    @Property('QVariantList', notify=changed)
+    @property
     def runHistory(self):
         return self.history_rows
 
-    @Property(str, notify=changed)
+    @property
     def historyError(self):
         return self.history_error
 
-    @Slot()
     def loadRunHistory(self):
         account = 'offline-demo' if self.demo_mode else self.account_store.active if self.account_store else ''
         self.history_rows = []
@@ -707,7 +680,6 @@ class Backend(QObject):
             self.changed.emit()
             return False
 
-    @Slot(str, result=bool)
     def prepareRecovery(self, run_id):
         def run():
             if self.busy:
@@ -732,23 +704,22 @@ class Backend(QObject):
             self.pageRequested.emit(0)
         return self.execute(run, 'recovery')
 
-    @Property('QVariantMap', notify=changed)
+    @property
     def serviceHealth(self):
         return {key: self.service_health(key) for key in (*self.provider_order, 'ai')}
 
-    @Property(QObject, constant=True)
+    @property
     def attentionModel(self):
         return self._attention_filter
 
-    @Slot(str, str)
     def filterAttention(self, query, bucket):
         self._attention_filter.set_filter(query, bucket)
 
-    @Property("QVariantMap", notify=inputChanged)
+    @property
     def input(self):
         return self.interaction
 
-    @Property("QVariantList", notify=providersChanged)
+    @property
     def providers(self):
         enabled = self.enabled_providers()
         return [dict(key=k, title=PROVIDER_SPECS[k].title, enabled=k in enabled,
@@ -768,7 +739,7 @@ class Backend(QObject):
         return (check['time'] + ' · ' + check['message'] if check['fingerprint'] == self.service_fingerprint(key)
                 else '配置已变化 · 上次测试已过期')
 
-    @Property(str, notify=configChanged)
+    @property
     def aiDestination(self):
         from urllib.parse import urlsplit
         try:
@@ -782,7 +753,7 @@ class Backend(QObject):
                                        fingerprint=self.service_fingerprint(key), message=self.redact(message))
         self.providersChanged.emit()
 
-    @Property(str, notify=changed)
+    @property
     def strategySummary(self):
         c = defaults() if self.demo_mode else self.config
         on = lambda s, k: c[s][k].lower() == 'true'
@@ -802,7 +773,7 @@ class Backend(QObject):
                  '离线演示：零平台写入、零服务请求' if self.demo_mode else '外部请求：平台读取与学习上报；启用的题库／AI 接收题干、选项及可能的图片链接；通知发送运行计数。']
         return self.redact('\n'.join(lines))
 
-    @Property(str, constant=True)
+    @property
     def dataExplanation(self):
         return ('当前数据 profile：' + str(data_dir()) + '\n\n'
                 'settings.ini：策略与受 DPAPI 保护的服务凭据；登录密码不持久化。\n'
@@ -821,11 +792,10 @@ class Backend(QObject):
         self.message, self.tone = self.redact(message), tone
         self.changed.emit()
 
-    @Property('QVariantMap', notify=changed)
+    @property
     def uiFeedback(self):
         return {key: dict(value) for key, value in self._ui_feedback.items()}
 
-    @Slot(str)
     def clearUiFeedback(self, scope):
         if self._ui_feedback.pop(scope, None) is not None:
             self.changed.emit()
@@ -843,13 +813,12 @@ class Backend(QObject):
     def enabled_providers(self):
         return [s for s in self.config["question_bank"]["providers"].split(",") if s]
 
-    @Property("QVariantList", notify=changed)
+    @property
     def accountRows(self):
         return [dict(row) for row in self._account_rows_cache]
 
     def refresh_account_status(self):
-        # data_dir() creates/checks the profile directory. Keep this filesystem
-        # work out of the thousands of QML summary property reads per refresh.
+        # 缓存日志目录和账号状态，避免每次读取摘要都访问磁盘。
         self._log_directory = str(LogStore.resolve(self.config['logging']['directory']))
         if not self.account_store:
             self._account_rows_cache, self._cookie_exists = [], False
@@ -912,7 +881,6 @@ class Backend(QObject):
             self.changed.emit()
         return store.get(store.active)
 
-    @Slot()
     def browserLogin(self):
         if self.busy:
             return
@@ -972,12 +940,10 @@ class Backend(QObject):
             self.fetchCourses()
         self.execute(run)
 
-    @Slot()
     def cancelBrowserLogin(self):
         if self._browser_login:
             self._browser_login.cancel()
 
-    @Slot()
     def addAccount(self):
         if self.busy:
             return
@@ -989,7 +955,6 @@ class Backend(QObject):
             self.notify('填写新账号并登录，或导入该账号的 Cookie。原有账号会话已保留。')
         self.execute(run)
 
-    @Slot(str)
     def switchAccount(self, account_id):
         if self.busy:
             self.notify('请先停止当前任务，再切换账号。', 'warning')
@@ -1008,7 +973,6 @@ class Backend(QObject):
             self.notify('已切换到 ' + row['label'] + '，选择登录方式进入该账号课程。')
         self.execute(run)
 
-    @Slot(str)
     def renameAccount(self, label):
         if self.busy:
             return
@@ -1021,8 +985,6 @@ class Backend(QObject):
             self.changed.emit()
         self.execute(run)
 
-    @Slot()
-    @Slot(str)
     def removeAccount(self, expected_account=''):
         if self.busy:
             return
@@ -1036,7 +998,6 @@ class Backend(QObject):
             self.notify('已删除当前账号及其本机 Cookie。其他账号会话已保留。')
         self.execute(run)
 
-    @Slot(str, str, str)
     def setValue(self, section, key, value):
         if self.busy or not self.config.has_option(section, key):
             return
@@ -1054,7 +1015,6 @@ class Backend(QObject):
                 self.config["ai"]["model"] = "deepseek-ai/DeepSeek-R1"
         self.settings_edited()
 
-    @Slot(str, bool)
     def toggleProvider(self, key, checked):
         if self.busy or key not in self.provider_order:
             return
@@ -1063,7 +1023,6 @@ class Backend(QObject):
         self.setValue("question_bank", "providers", ",".join(k for k in self.provider_order if k in enabled))
         self.providersChanged.emit()
 
-    @Slot(int, int)
     def moveProvider(self, index, delta):
         target = index + delta
         if self.busy or not (0 <= index < len(self.provider_order) and 0 <= target < len(self.provider_order)):
@@ -1074,13 +1033,11 @@ class Backend(QObject):
         self.changed.emit()
         self.providersChanged.emit()
 
-    @Slot(str)
     def searchCourses(self, value):
         self.search = value
         self.coursesChanged.emit()
         self.changed.emit()
 
-    @Slot(str, str, bool)
     def selectCourse(self, course, clazz, checked):
         key = (course, clazz)
         if self.busy or key not in {course_key(c) for c in self.courses}:
@@ -1089,7 +1046,6 @@ class Backend(QObject):
         self.coursesChanged.emit()
         self.changed.emit()
 
-    @Slot(bool)
     def selectVisible(self, checked):
         if self.busy:
             return
@@ -1252,7 +1208,7 @@ class Backend(QObject):
             self.history_error = ''
             self.save_run_summary('运行中 / 若已退出则为中断快照')
 
-    @Property('QVariantMap', notify=changed)
+    @property
     def resumeState(self):
         """Visible continuation state; empty when there is nothing to continue."""
         row = self._resume
@@ -1403,7 +1359,6 @@ class Backend(QObject):
                             approved=None,
                             stopped_at=datetime.now().astimezone().isoformat(timespec='seconds'))
 
-    @Slot()
     def resumeTasks(self):
         """Continue the explicitly stopped run without re-selecting courses."""
         def run():
@@ -1455,11 +1410,9 @@ class Backend(QObject):
         self.notify('正在续跑：沿用原账号、原课程与原任务点范围；已确认完成项和结果未知项不会重跑。')
         return True
 
-    @Slot()
     def loadDemo(self):
         self.execute(lambda: self.begin("courses", True))
 
-    @Slot()
     def fetchCourses(self):
         self.execute(lambda: self.begin("courses"))
 
@@ -1473,7 +1426,6 @@ class Backend(QObject):
         except Exception as exc:
             self.notify(f'启动时登录失败：{exc}。请在账号页重新登录。', 'warning')
 
-    @Slot()
     def startTasks(self):
         def start():
             if not self.selected:
@@ -1488,7 +1440,6 @@ class Backend(QObject):
             self.begin("run", self.demo_mode, [list(k) for k in sorted(self.selected)])
         self.execute(start)
 
-    @Slot()
     def confirmStartTasks(self):
         pending, self._start_confirmation = self._start_confirmation, None
         if pending and pending[0] == 'resume':
@@ -1511,11 +1462,9 @@ class Backend(QObject):
         self._approved_policy = pending[0]
         self.startTasks()
 
-    @Slot()
     def cancelStartTasks(self):
         self._start_confirmation = None
 
-    @Slot()
     def verifyPending(self):
         def run():
             if self.busy:
@@ -1547,7 +1496,6 @@ class Backend(QObject):
             self.notify('正在核验待完成章节的平台进度。')
         self.execute(run)
 
-    @Slot(bool, str)
     def filterQuestions(self, pending_only, task):
         self._question_filter.set_filter(pending_only, task)
 
@@ -1556,31 +1504,25 @@ class Backend(QObject):
         self._question_revision += 1
         self.questionsReset.emit()
 
-    @Slot(str, result='QVariantMap')
     def questionDetail(self, record_id):
         row = self._question_model.row_index(record_id)
         return self._question_model.data(self._question_model.index(row)) if row is not None else {}
 
-    @Slot(str, str)
     def filterDiscussions(self, query, stage):
         self._discussion_filter.set_filter(query, stage)
 
-    @Slot(str, str)
     def filterActivities(self, query, stage):
         self._activity_filter.set_filter(query, stage)
 
-    @Slot(str, result='QVariantMap')
     def activityDetail(self, record_id):
         return self._activity_model.detail(record_id)
 
-    @Slot(str)
     def copyActivity(self, record_id):
         record = self._activity_model.detail(record_id)
         if record:
             self.copy_text(record['detailText'])
             self.feedback('record', '活动逐题草稿已复制。', 'success')
 
-    @Slot(str)
     def previewActivity(self, topic):
         def run():
             if self.busy:
@@ -1604,11 +1546,9 @@ class Backend(QObject):
             self.begin('activity_preview', topic=topic.strip())
         self.execute(run)
 
-    @Slot(str, result='QVariantMap')
     def discussionDetail(self, record_id):
         return self._discussion_model.detail(record_id)
 
-    @Slot(str)
     def previewDiscussion(self, topic):
         def run():
             if self.busy:
@@ -1623,19 +1563,16 @@ class Backend(QObject):
             self.begin('discussion_preview', topic=topic.strip())
         self.execute(run)
 
-    @Slot(str)
     def copyDiscussion(self, record_id):
         record = self._discussion_model.detail(record_id)
         if record.get('content'):
             self.copy_text(record['content'])
             self.feedback('record', '讨论正文已复制。', 'success')
 
-    @Slot()
     def pause(self):
         self.controller.pause()
         self.notify('暂停后续调度与答题写入；在途请求和当前媒体可能继续。' if self.controller.paused else '已请求恢复，后续任务将复核会话。')
 
-    @Slot()
     def offlineCheck(self):
         if self.busy:
             return
@@ -1645,12 +1582,10 @@ class Backend(QObject):
             self.notify(self.bank_status, 'success')
         self.execute(run)
 
-    @Slot(str)
     def checkBank(self, provider):
         if provider in PROVIDER_SPECS:
             self.execute(lambda: self.begin('check_bank', selected=[provider]))
 
-    @Slot(str)
     def definitionAction(self, action):
         if self.busy:
             return
@@ -1658,7 +1593,7 @@ class Backend(QObject):
             from .declarative import TEMPLATE, validate_definition, preview_definition
             import json
             if action == 'import':
-                name, _ = self.file_dialogs.getOpenFileName(None, '导入声明式 JSON（不执行 handler）', '', 'JSON (*.json)')
+                name = self.selected_path
                 if not name:
                     return
                 with Path(name).open('rb') as source:
@@ -1672,12 +1607,11 @@ class Backend(QObject):
             else:
                 text = self.config['question_bank']['declarative_definition']
                 definition = validate_definition(text) if text.strip() else TEMPLATE
-                name, _ = self.file_dialogs.getSaveFileName(None, '导出不含 Token 的 JSON 模板', 'question-bank.json', 'JSON (*.json)')
+                name = self.selected_path
                 if name:
                     Path(name).write_text(json.dumps(definition, ensure_ascii=False, indent=2), encoding='utf-8')
         self.execute(run)
 
-    @Slot(bool)
     def finishDefinitionImport(self, accepted):
         pending, self._definition_import = self._definition_import, None
         if not accepted or not pending:
@@ -1688,7 +1622,6 @@ class Backend(QObject):
         self.setValue('question_bank', 'declarative_definition', pending[0])
         self.notify('已导入受限定义，Token 需单独填写并保存。', 'success')
 
-    @Slot()
     def checkAi(self):
         self.execute(lambda: self.begin("check_ai"))
 
@@ -1707,7 +1640,6 @@ class Backend(QObject):
                 self.locate_invalid_field(exc)
             return False
 
-    @Slot()
     def stop(self):
         self.cancelBrowserLogin()
         if not self.controller.active:
@@ -1990,7 +1922,6 @@ class Backend(QObject):
         self.interaction = {}
         self.inputChanged.emit()
 
-    @Slot(str, bool)
     def reply(self, answer, cancel):
         if not self.interaction or not self.controller.active or self.controller.stopping:
             return
@@ -2044,7 +1975,6 @@ class Backend(QObject):
             QTimer.singleShot(0, self.start_course_progress)
         self.changed.emit()
 
-    @Slot(result=bool)
     def save(self):
         if self.busy:
             return False
@@ -2117,20 +2047,9 @@ class Backend(QObject):
                         self.fieldRequested.emit(spec['section'], spec['key'])
                         return
 
-    @Slot(result=bool)
-    def close(self):
-        return self._close(False)
-
-    @Slot(result=bool)
-    def discardAndClose(self):
-        return self._close(True)
-
-    def _close(self, discard):
+    def shutdown(self):
         if self._closed:
-            return True
-        # Keep the legacy QML close contract. Native WinUI asks before saving.
-        if not discard and self.settings_dirty and not self.startup_error and not self._save_settings(exiting=True):
-            return False
+            return
         self._settings_timer.stop()
         self.stop()
         self.cancel_course_progress()
@@ -2144,20 +2063,15 @@ class Backend(QObject):
             if not self.controller.process.waitForFinished(3000):
                 self.controller.process.kill()
                 self.controller.process.waitForFinished(1000)
-        if not self.log_store.close(2, force=discard) and not discard:
-            self.notify('日志尚未写完，可稍后重试或放弃修改并退出。', 'warning')
-            return False
+        self.log_store.close(2, force=True)
         self._closed = True
-        return True
 
-    @Slot(str)
     def fileAction(self, action):
         if self.busy and action not in ("export_logs",):
             return
         def run():
             if action in ("import_config", "import_cookie"):
-                title = "导入 INI 配置" if action == "import_config" else "导入 Cookie（name=value; 格式）"
-                name, _ = self.file_dialogs.getOpenFileName(None, title, "", "配置 / 文本 (*.ini *.txt);;所有文件 (*)")
+                name = self.selected_path
                 if not name:
                     return
                 text = Path(name).read_text(encoding="utf-8-sig")
@@ -2187,7 +2101,7 @@ class Backend(QObject):
                 self.reset_account_view()
                 self.notify("当前账号的本机 Cookie 已清除，其他账号会话已保留。")
             elif action == 'export_diagnostics':
-                name, _ = self.file_dialogs.getSaveFileName(None, '导出排障配置（不含凭据）', 'diagnostics.ini', 'INI (*.ini)')
+                name = self.selected_path
                 if name:
                     atomic_write(Path(name), diagnostic_config(self.config).encode('utf-8'))
                     self.notify('排障配置已导出；仅包含策略与版本，不含会话或内容。', 'success')
@@ -2195,25 +2109,22 @@ class Backend(QObject):
                 is_config = action == "export_config"
                 if is_config:
                     validate(self.config)
-                name, _ = self.file_dialogs.getSaveFileName(None, "导出完整 INI（包含密码与密钥）" if is_config else "导出已脱敏日志", "config.ini" if is_config else "chaoxing-desktop.log", "INI (*.ini)" if is_config else "日志 (*.log)")
+                name = self.selected_path
                 if name:
                     atomic_write(Path(name), (serialize(self.config) if is_config else self.redact(self.log_redactor("\n".join(self.logs)))).encode('utf-8'))
                     self.notify("文件已导出。", "success")
         self.execute(run)
 
-    @Slot()
     def clearLogs(self):
         self._log_model.clear()
 
-    @Slot()
     def chooseLogDirectory(self):
         if self.busy:
             return
-        directory = self.file_dialogs.getExistingDirectory(None, "选择日志保存目录", self.summary['logDirectory'])
+        directory = self.selected_path
         if directory:
             self.setValue('logging', 'directory', directory)
 
-    @Slot()
     def deleteLogs(self):
         def run():
             count = self.log_store.delete(self.config['logging']['directory'])

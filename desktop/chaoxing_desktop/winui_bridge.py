@@ -1,9 +1,4 @@
-"""Private JSON-lines transport for the native WinUI 3 frontend.
-
-Qt Core owns the existing controllers/models, but no Qt window or QML engine
-is created. All dialogs, clipboard operations and rendering belong to WinUI.
-The pipe is inherited by the child; no port or persistent credential file.
-"""
+"""通过继承的标准输入和输出与 WinUI 3 交换 JSON 行。"""
 from __future__ import annotations
 
 import json
@@ -13,10 +8,9 @@ import threading
 
 from PySide6.QtCore import QCoreApplication, QTimer
 
-from .qml_backend import Backend
+from .workbench_backend import WorkbenchBackend
 from .instance import InstanceGuard
 from .config import data_dir
-from .release_info import RELEASE_URLS, verification_info
 
 
 # Deliberately exclude event handlers and internal methods from RPC.
@@ -37,40 +31,10 @@ MAX_COMMAND_BYTES = 1024 * 1024
 CLOSE_COMMANDS = frozenset(('close', 'saveAndClose', 'discardAndClose', 'cancelClose'))
 
 
-class PathDialogs:
-    """A path already selected by the native Windows file picker."""
-    path = ""
-
-    def getOpenFileName(self, *_):
-        return self.path, ""
-
-    getSaveFileName = getOpenFileName
-
-    def getExistingDirectory(self, *_):
-        return self.path
-
-
-class NativeBackend(Backend):
-    def __init__(self, send):
-        self.send = send
-        self.file_dialogs = PathDialogs()
-        super().__init__()
-
-    def copy_text(self, text):
-        self.send(dict(type="clipboard", text=text))
-
-    def releaseAction(self, action):
-        if action == "copy":
-            self.copy_text(verification_info())
-            self.feedback('release', '版本与校验说明已复制；不含账号、凭据或数据目录。', 'success')
-        elif action in RELEASE_URLS:
-            self.send(dict(type="openUrl", url=RELEASE_URLS[action]))
-
-
 class Bridge:
     def __init__(self, app, send):
         self.app, self.send = app, send
-        self.backend = NativeBackend(send)
+        self.backend = WorkbenchBackend(send)
         self.guard = InstanceGuard(data_dir(), app)
         self.guard.activate = lambda: send(dict(type="activate"))
         self.dirty = set()
@@ -178,7 +142,7 @@ class Bridge:
             path = request.get("path", "")
             if not isinstance(path, str) or len(path) > 32768:
                 raise ValueError("文件路径无效")
-            self.backend.file_dialogs.path = path
+            self.backend.selected_path = path
             if request['method'] in CLOSE_COMMANDS:
                 # Acknowledge a successful save before waiting for workers.
                 # WinUI hides the window, then awaits this process's cleanup.
@@ -201,10 +165,10 @@ class Bridge:
             # Do not echo commands, arguments, paths or tracebacks with secrets.
             self.send(dict(type="response", id=request_id, error=self.backend.redact(str(exc))))
         finally:
-            self.backend.file_dialogs.path = ""
+            self.backend.selected_path = ""
 
     def dispose(self):
-        self.backend.discardAndClose()
+        self.backend.shutdown()
         self.guard.close()
 
 
