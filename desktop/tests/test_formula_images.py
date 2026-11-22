@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -62,6 +63,7 @@ class FormulaImagesTest(unittest.TestCase):
                                  endpoint='https://model.invalid:8443/v1',
                                  key='internal-ai-key', model='synthetic', min_interval_seconds='0')
         self.channel = Channel(io.StringIO(), io.StringIO(), Redactor(self.config))
+        self.channel.image_cache_dir = Path(self.enterContext(TemporaryDirectory()))
         self.channel.ask = Mock(return_value='allow-images')
         self.ai = AIClient(self.config['ai'])
         self.images = dict(zip((TITLE, A_IMAGE, B_IMAGE), (png(0x112233), png(0x995544), png(0x887766))))
@@ -123,6 +125,9 @@ class FormulaImagesTest(unittest.TestCase):
         row = self.records()['123']
         self.assertEqual((row['source'], row['answer_letters'], row['answer']), ('ai', 'B', '[图片]'))
         self.assertIn('B. [图片]', row['options'])
+        files = list(self.channel.image_cache_dir.glob('*.png'))
+        self.assertEqual(len(files), 3)
+        self.assertCountEqual(row['images'], [file.as_uri() for file in files])
         self.assertNotIn('formula.invalid', self.channel.output.getvalue())
         old = dict(row)
         old.pop('answer_letters')

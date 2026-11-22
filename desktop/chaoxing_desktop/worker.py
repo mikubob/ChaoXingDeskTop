@@ -5,11 +5,13 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import threading
 import queue
 import uuid
 from .control import RunControl, Cancelled, ResumeFailed, checkpoint, wait as controlled_wait
+from .image_cache import profile_image_cache, remove_image_cache
 from .query_result import safe_record
 
 from .config import Redactor, course_key, resource_root, select_courses
@@ -22,6 +24,7 @@ class Channel:
         self.input_lock = threading.Lock()
         self.run_id = uuid.uuid4().hex
         self.control = None
+        self.image_cache_dir = None
 
     def send(self, event_type: str, **values):
         if "message" in values:
@@ -596,6 +599,10 @@ def main() -> int:
         path = Path(command["data_dir"]).resolve()
         path.mkdir(parents=True, exist_ok=True)
         os.chdir(path)
+        if command.get('action') == 'run' and re.fullmatch(r'[0-9a-f]{32}', str(command.get('run_id', ''))):
+            directory = profile_image_cache(path) / channel.run_id
+            if directory.is_dir() and directory.resolve() == directory:
+                channel.image_cache_dir = directory
         if command.get("action") == "probe":
             load_core(channel)
             from api.cxsecret_font import fonthash_dao
@@ -728,3 +735,5 @@ def main() -> int:
     except Exception as exc:
         channel.send("error", message=f"{type(exc).__name__}: {exc}")
         return 1
+    finally:
+        remove_image_cache(channel.image_cache_dir)

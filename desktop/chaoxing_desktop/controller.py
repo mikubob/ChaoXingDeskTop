@@ -6,6 +6,8 @@ import time
 
 from PySide6.QtCore import QObject, QProcess, Signal, QTimer
 
+from .image_cache import profile_image_cache, remove_image_cache
+
 
 class Controller(QObject):
     MAX_FRAME_BYTES = 16 * 1024 * 1024
@@ -35,6 +37,7 @@ class Controller(QObject):
         self.stopping = False
         self.paused = False
         self.run_id = ''
+        self.image_cache_dir = None
         self.request_id = ''
         self._kill_timer = QTimer(self)
         self._kill_timer.setSingleShot(True)
@@ -45,6 +48,13 @@ class Controller(QObject):
             raise RuntimeError("已有后台任务正在运行。")
         self.run_id = uuid.uuid4().hex
         self.payload = dict(payload, run_id=self.run_id)
+        if payload.get('action') == 'run':
+            directory = profile_image_cache(payload['data_dir']) / self.run_id
+            try:
+                directory.mkdir(parents=True)
+                self.image_cache_dir = directory
+            except OSError:
+                self.image_cache_dir = None
         self.paused = False
         self.request_id = ''
         self._kill_timer.stop()
@@ -212,6 +222,8 @@ class Controller(QObject):
             self._kill_timer.start(3000)
 
     def on_finished(self, code, _status):
+        remove_image_cache(self.image_cache_dir)
+        self.image_cache_dir = None
         # Deliver queued done/error events before announcing process exit.
         self._exit_code = code
         self.read_output()
@@ -229,6 +241,8 @@ class Controller(QObject):
 
     def on_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
+            remove_image_cache(self.image_cache_dir)
+            self.image_cache_dir = None
             self.active = False
             self.payload = {}
             self.event.emit({"type": "error", "message": "后台无法启动，请确认软件目录完整且未被隔离。"})

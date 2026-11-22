@@ -4,7 +4,6 @@ from collections import OrderedDict
 import hashlib
 from html import unescape
 from html.parser import HTMLParser
-from pathlib import Path
 import re
 import threading
 import unicodedata
@@ -231,12 +230,14 @@ class ImageEncoder:
         header, _, payload = data_url.partition(',')
         mime = header.removeprefix('data:').partition(';')[0].lower()
         ext = _MIME_EXT.get(mime, '.png')
-        target_dir = Path(directory)
-        target_dir.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256(url.encode('utf-8')).hexdigest()[:24]
-        target = target_dir / f'{digest}{ext}'
-        if not target.exists():
-            target.write_bytes(base64.b64decode(payload))
+        target = directory / f'{digest}{ext}'
+        try:
+            # 缓存目录由工作台创建，退出后运行中的旧后台不能重新创建它。
+            if not target.exists():
+                target.write_bytes(base64.b64decode(payload))
+        except OSError:
+            return ''
         return target.as_uri()
 
 

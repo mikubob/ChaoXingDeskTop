@@ -4,10 +4,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-from pathlib import Path
 import random
 import re
-import tempfile
 import threading
 import time
 from html import unescape
@@ -784,7 +782,9 @@ class AnswerRouter:
                     publish_ai(i, 'skipped', 'error', 'AI 本轮停用：' + self.ai_unavailable)
             cache_encoder = self.ai.image_encoder if isinstance(self.ai, AIClient) else next(
                 (vars(b).get('_image_encoder') for _, b in self.banks if vars(b).get('_image_encoder') is not None), None)
-            cache_dir = Path(tempfile.gettempdir()) / 'chaoxing_desktop_images'
+            cache_dir = getattr(self.channel, 'image_cache_dir', None)
+            if cache_dir is None:
+                cache_encoder = None
             if cache_encoder is not None:
                 for i, question in enumerate(questions):
                     urls = [u for u in question_images(question)

@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication, QTimer
 from .workbench_backend import WorkbenchBackend
 from .instance import InstanceGuard
 from .config import data_dir
+from .image_cache import clear_stale_image_cache
 
 
 # Deliberately exclude event handlers and internal methods from RPC.
@@ -103,6 +104,7 @@ class Bridge:
         if not self.guard.acquire():
             self.send(dict(type="alreadyRunning"))
             return False
+        clear_stale_image_cache(data_dir())
         self.send(dict(type="ready", data=dict(version=self.backend.version,
                   schema=self.backend.schema, releaseInfo=self.backend.releaseInfo,
                   dataExplanation=self.backend.dataExplanation)))

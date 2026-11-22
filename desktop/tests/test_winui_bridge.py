@@ -10,9 +10,12 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 from PySide6.QtGui import QImage
 
+from chaoxing_desktop.config import defaults, to_payload
+from chaoxing_desktop.controller import Controller
+from chaoxing_desktop.image_cache import image_cache_root, profile_image_cache
 from chaoxing_desktop.question_model import NUMBERS, STRINGS
 from chaoxing_desktop.winui_bridge import Bridge
 
@@ -27,9 +30,19 @@ class WinUIBridgeTests(unittest.TestCase):
             settings = data / 'settings.ini'
             settings.write_text('[desktop]\nauto_save = false\nauto_login = false\n', encoding='utf-8')
             diagnostics = data / 'diagnostics.ini'
+            temporary_root = data / 'temp'
+            temporary_root.mkdir()
+            with patch('chaoxing_desktop.image_cache.tempfile.gettempdir', return_value=str(temporary_root)):
+                stale = profile_image_cache(data) / ('a' * 32) / 'image.png'
+                other_profile = profile_image_cache(data / 'other') / ('b' * 32) / 'image.png'
+                legacy = image_cache_root() / ('c' * 24 + '.png')
+                unrelated = image_cache_root() / 'keep.txt'
+            for file in (stale, other_profile, legacy, unrelated):
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(b'offline fixture')
             with tempfile.TemporaryFile(mode='w+b') as errors, subprocess.Popen(
                 [sys.executable, str(DESKTOP / 'run.py'), '--bridge'],
-                env=dict(os.environ, CHAOXING_DESKTOP_DATA=directory), cwd=DESKTOP,
+                env=dict(os.environ, CHAOXING_DESKTOP_DATA=directory, TMP=str(temporary_root), TEMP=str(temporary_root)), cwd=DESKTOP,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
                 text=True, encoding='utf-8',
             ) as process:
@@ -70,6 +83,10 @@ class WinUIBridgeTests(unittest.TestCase):
                 try:
                     ready, state = read_frame(), read_frame()
                     self.assertEqual((ready['type'], state['type']), ('ready', 'state'))
+                    self.assertFalse(stale.parent.exists())
+                    self.assertFalse(legacy.exists())
+                    self.assertTrue(other_profile.is_file())
+                    self.assertTrue(unrelated.is_file())
                     schema = ready['data']['schema']
                     policy = next(field for group in schema['ai'] for field in group['fields']
                                   if field['key'] == 'image_confirm_policy')
@@ -150,6 +167,45 @@ class WinUIBridgeTests(unittest.TestCase):
             finally:
                 bridge.timer.stop()
                 bridge.dispose()
+
+    def test_run_image_cache_is_removed_when_worker_exits(self):
+        app = QCoreApplication.instance() or QCoreApplication([])
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        with patch.dict(os.environ, TMP=directory, TEMP=directory), \
+                patch('chaoxing_desktop.image_cache.tempfile.gettempdir', return_value=directory):
+            for mode in ('complete', 'stop', 'crash'):
+                with self.subTest(mode=mode):
+                    controller = Controller(app)
+                    loop = QEventLoop()
+                    timeout = QTimer()
+                    timeout.setSingleShot(True)
+                    timeout.timeout.connect(loop.quit)
+                    codes = []
+                    controller.finished.connect(codes.append)
+                    controller.finished.connect(loop.quit)
+                    if mode == 'stop':
+                        controller.process.started.connect(controller.stop)
+                    elif mode == 'crash':
+                        controller.process.started.connect(controller.process.kill)
+                    controller.start(dict(action='run', demo=True, selected=[['demo-101', '01']],
+                                          data_dir=directory, config=to_payload(defaults())))
+                    cache = controller.image_cache_dir
+                    (cache / 'image.png').write_bytes(b'offline fixture')
+                    try:
+                        if not codes:
+                            timeout.start(10000)
+                            loop.exec()
+                        if mode == 'crash':
+                            self.assertTrue(codes and codes[0] != 0, codes)
+                        else:
+                            self.assertEqual(codes, [0 if mode == 'complete' else 2])
+                        self.assertFalse(cache.exists())
+                    finally:
+                        timeout.stop()
+                        if controller.active:
+                            controller.process.kill()
+                            controller.process.waitForFinished(1000)
+                        controller.deleteLater()
 
 
 if __name__ == '__main__':

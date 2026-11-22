@@ -592,14 +592,16 @@ public sealed partial class MainWindow
         {
             var imageUris = J.A(record["images"])
                 .Select(node => Uri.TryCreate(node.ToString(), UriKind.Absolute, out var uri) && uri.Scheme == "file" ? uri : null)
-                .Where(uri => uri != null)
+                .OfType<Uri>()
                 .ToArray();
             if (imageUris.Length > 0)
             {
-                var panel = Column(Text(text), Text("题目图片（本机缓存）：", 12, true));
-                foreach (var uri in imageUris)
+                var available = imageUris.Where(uri => File.Exists(uri.LocalPath)).ToArray();
+                var panel = Column(Text(text), Text(available.Length > 0 ? "题目图片（本机缓存）" :
+                    "题图缓存已不可用，请在学习平台查看原题。", 12, true));
+                foreach (var uri in available)
                 {
-                    var image = new Image { Source = new BitmapImage(uri!), MaxHeight = 220, Stretch = Stretch.Uniform };
+                    var image = new Image { Source = new BitmapImage(uri), MaxHeight = 220, Stretch = Stretch.Uniform };
                     var failed = Text("图片加载失败，请在学习平台查看原题。", 12, true);
                     failed.Visibility = Visibility.Collapsed;
                     image.ImageFailed += (_, _) => failed.Visibility = Visibility.Visible;
