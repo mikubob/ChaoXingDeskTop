@@ -36,11 +36,10 @@ def diagnostic_config(config):
                         out.add_section(section)
                     out[section][key] = value
     from .providers import PROVIDER_SPECS
-    for section in ('question_bank', 'exam_question_bank'):
-        if not out.has_section(section):
-            out.add_section(section)
-        out[section]['providers'] = ','.join(
-            name for name in config.get(section, 'providers', fallback='').split(',') if name in PROVIDER_SPECS)
+    if not out.has_section('question_bank'):
+        out.add_section('question_bank')
+    out['question_bank']['providers'] = ','.join(
+        name for name in config['question_bank']['providers'].split(',') if name in PROVIDER_SPECS)
     import io
     stream = io.StringIO()
     out.write(stream)

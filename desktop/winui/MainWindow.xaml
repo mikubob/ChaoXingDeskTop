@@ -86,7 +86,6 @@
      <ListViewItem Tag="2" AutomationProperties.Name="题库与 AI"><StackPanel Orientation="Horizontal" Spacing="13"><FontIcon Glyph="&#xE99A;" FontSize="18"/><TextBlock Text="题库与 AI"/></StackPanel></ListViewItem>
      <ListViewItem Tag="3" AutomationProperties.Name="高级设置"><StackPanel Orientation="Horizontal" Spacing="13"><FontIcon Glyph="&#xE90F;" FontSize="18"/><TextBlock Text="高级设置"/></StackPanel></ListViewItem>
      <ListViewItem Tag="4" AutomationProperties.Name="任务与日志"><StackPanel Orientation="Horizontal" Spacing="13"><FontIcon Glyph="&#xE9D9;" FontSize="18"/><TextBlock Text="任务与日志"/></StackPanel></ListViewItem>
-     <ListViewItem Tag="5" AutomationProperties.Name="考试"><StackPanel Orientation="Horizontal" Spacing="13"><FontIcon Glyph="&#xE82D;" FontSize="18"/><TextBlock Text="考试"/></StackPanel></ListViewItem>
     </ListView>
     <Border x:Name="CategoryIndicator" Width="3" Height="20" CornerRadius="2" Background="#2563EB" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Opacity="0">
      <Border.RenderTransform><TranslateTransform/></Border.RenderTransform>

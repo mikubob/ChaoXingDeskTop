@@ -13,11 +13,7 @@ def source_files(desktop: Path):
         "scripts/retired-runtime-0.6.5.txt",
         "tests/test_ai_resilience.py",
         "tests/test_decode_choices.py",
-        "tests/test_exam_config.py",
-        "tests/test_exam_drafts.py",
-        "tests/test_exam_protocol.py",
         "tests/test_formula_images.py",
-        "tests/test_homework_drafts.py",
         "tests/test_ordered_chapters.py",
         "tests/test_winui_bridge.py",
         # SVG 是应用图标源文件，ICO 供 WinUI 和冻结后台构建使用。
@@ -33,8 +29,6 @@ def source_files(desktop: Path):
     for directory, extensions in (
         ("chaoxing_desktop", {".py"}),
         ("scripts", {".py", ".ps1", ".nsi"}),
-        ("tests/fixtures/exam", {".html"}),
-        ("tests/fixtures/homework", {".html"}),
         ("vendor/chaoxing/api", {".py", ".md"}),
     ):
         for path in (desktop / directory).rglob("*"):

@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-import time
 
 from .control import checkpoint
 from .storage import atomic_write, file_lock
@@ -44,9 +43,7 @@ def send_progress(channel, course, points):
 
 def refresh_progress(client, channel, courses):
     from .verification import fatal_error
-    for idx, course in enumerate(courses):
-        if idx > 0:
-            time.sleep(0.25)
+    for course in courses:
         checkpoint(channel)
         identity = progress_identity(course)
         channel.send('course_progress_loading', **identity)

@@ -6,7 +6,7 @@ import time
 
 from PySide6.QtCore import QObject, QProcess, Signal, QTimer
 
-from .image_cache import PAPER_IMAGE_ACTIONS, paper_image_cache, profile_image_cache, remove_image_cache
+from .image_cache import profile_image_cache, remove_image_cache
 
 
 class Controller(QObject):
@@ -38,7 +38,6 @@ class Controller(QObject):
         self.paused = False
         self.run_id = ''
         self.image_cache_dir = None
-        self.keep_image_cache = False
         self.request_id = ''
         self._kill_timer = QTimer(self)
         self._kill_timer.setSingleShot(True)
@@ -49,11 +48,8 @@ class Controller(QObject):
             raise RuntimeError("已有后台任务正在运行。")
         self.run_id = uuid.uuid4().hex
         self.payload = dict(payload, run_id=self.run_id)
-        action = payload.get('action')
-        self.keep_image_cache = action in PAPER_IMAGE_ACTIONS
-        if action == 'run' or self.keep_image_cache:
-            root = paper_image_cache if self.keep_image_cache else profile_image_cache
-            directory = root(payload['data_dir']) / self.run_id
+        if payload.get('action') == 'run':
+            directory = profile_image_cache(payload['data_dir']) / self.run_id
             try:
                 directory.mkdir(parents=True)
                 self.image_cache_dir = directory
@@ -194,158 +190,6 @@ class Controller(QObject):
             return isinstance(event.get("question", {}), dict) and isinstance(event.get("choices", []), list) and all(
                 isinstance(choice, dict) and isinstance(choice.get("label"), str) and isinstance(choice.get("value"), str)
                 for choice in event.get("choices", []))
-        if kind == "exam_list":
-            exams = event.get("exams")
-            return (
-                type(event.get("demo")) is bool
-                and isinstance(exams, list)
-                and len(exams) <= 500
-                and all(
-                    isinstance(item, dict)
-                    and all(
-                        isinstance(item.get(k), str) and len(item[k]) <= 1024
-                        for k in ("examId", "courseId", "clazzId", "courseTitle", "title", "timeText", "modeText", "status", "statusText", "reason", "officialUrl")
-                    )
-                    and bool(item["examId"].strip())
-                    and bool(item["title"].strip())
-                    and type(item.get("nativeSupported")) is bool
-                    for item in exams
-                )
-            )
-        if kind == "exam_opened":
-            from .exam_drafts import _validate_question, _validate_answer_for_question, MAX_QUESTIONS
-            paper = event.get("paper")
-            platform_answers = event.get("platform_answers")
-            if (
-                not isinstance(paper, dict)
-                or not isinstance(event.get("server_now_utc"), str)
-                or len(event["server_now_utc"]) > 100
-                or not isinstance(platform_answers, dict)
-            ):
-                return False
-            if (
-                not all(isinstance(paper.get(k), str) and 0 < len(paper[k].strip()) <= 500 for k in ("course_id", "clazz_id", "exam_id", "attempt_id", "title"))
-                or not isinstance(paper.get("course_title", ""), str)
-                or len(paper.get("course_title", "")) > 500
-                or not isinstance(paper.get("deadline_utc", ""), str)
-                or len(paper.get("deadline_utc", "")) > 100
-                or type(paper.get("demo")) is not bool
-            ):
-                return False
-            questions = paper.get("questions")
-            if not isinstance(questions, list) or not 1 <= len(questions) <= MAX_QUESTIONS:
-                return False
-            qmap = {}
-            try:
-                for q in questions:
-                    _validate_question(q)
-                    qmap[q["id"]] = q
-                for qid, ans in platform_answers.items():
-                    if not isinstance(qid, str) or qid not in qmap or not isinstance(ans, dict):
-                        return False
-                    norm = {
-                        "option_ids": list(ans.get("option_ids", [])),
-                        "text": str(ans.get("text", "")),
-                        "blanks": list(ans.get("blanks", [])),
-                        "source": str(ans.get("source", "platform") or "platform"),
-                        "updated_at": str(ans.get("updated_at", "")),
-                    }
-                    _validate_answer_for_question(qmap[qid], norm)
-            except (ValueError, TypeError):
-                return False
-            return True
-        if kind == "exam_unavailable":
-            return all(isinstance(event.get(k), str) and 0 < len(event[k]) <= 1024
-                       for k in ("exam_id", "course_id", "clazz_id", "reason"))
-        if kind in ("exam_suggestion", "homework_suggestion"):
-            ans = event.get("answer")
-            attempts = event.get("attempts")
-            platform_saved = event.get("platform_saved", False)
-            save_reason = event.get("save_reason", "")
-            return (
-                isinstance(event.get("question_id"), str)
-                and 0 < len(event["question_id"]) <= 256
-                and isinstance(ans, dict)
-                and isinstance(ans.get("option_ids", []), list)
-                and all(isinstance(v, str) and len(v) <= 256 for v in ans.get("option_ids", []))
-                and isinstance(ans.get("blanks", []), list)
-                and all(isinstance(v, str) and len(v) <= 12000 for v in ans.get("blanks", []))
-                and isinstance(ans.get("text", ""), str)
-                and len(ans.get("text", "")) <= 12000
-                and isinstance(event.get("source"), str)
-                and len(event["source"]) <= 128
-                and isinstance(event.get("reason"), str)
-                and len(event["reason"]) <= 2000
-                and isinstance(attempts, list)
-                and len(attempts) <= 32
-                and all(isinstance(a, dict) for a in attempts)
-                and type(platform_saved) is bool
-                and isinstance(save_reason, str)
-                and len(save_reason) <= 500
-            )
-        if kind in ("exam_assist_done", "homework_assist_done"):
-            saved_count = event.get("saved_count", 0)
-            rolling_enc = event.get("rolling_enc", [])
-            return (
-                all(type(event.get(k)) is int and 0 <= event[k] <= 10**6 for k in ("completed", "total", "resolved"))
-                and event["completed"] <= event["total"]
-                and type(saved_count) is int
-                and 0 <= saved_count <= 10**6
-                and isinstance(rolling_enc, list)
-                and len(rolling_enc) <= 3
-                and all(isinstance(v, str) and len(v) <= 256 for v in rolling_enc)
-                and isinstance(event.get("message", ""), str)
-                and len(event.get("message", "")) <= 2000
-            )
-        if kind == "exam_saved":
-            return (
-                all(isinstance(event.get(k), str) and 0 < len(event[k]) <= 256 for k in ("exam_id", "attempt_id"))
-                and type(event.get("verified")) is bool
-                and isinstance(event.get("reason"), str)
-                and len(event["reason"]) <= 2000
-            )
-        if kind == "exam_submitted":
-            return (
-                all(isinstance(event.get(k), str) and 0 < len(event[k]) <= 256 for k in ("exam_id", "attempt_id"))
-                and event.get("state") in ("submitted", "simulated_submitted", "submit_unknown", "rejected")
-                and isinstance(event.get("reason"), str)
-                and len(event["reason"]) <= 2000
-            )
-        if kind == "homework_list":
-            works = event.get("homeworks")
-            return (
-                type(event.get("demo")) is bool
-                and isinstance(works, list)
-                and len(works) <= 1000
-                and all(
-                    isinstance(item, dict)
-                    and all(
-                        isinstance(item.get(k), str) and len(item[k]) <= 1024
-                        for k in ("workId", "courseId", "clazzId", "courseTitle", "title", "status", "statusText", "timeText", "workUrl", "reason")
-                    )
-                    and bool(item["title"].strip())
-                    and type(item.get("canOpen")) is bool
-                    for item in works
-                )
-            )
-        if kind == "homework_loaded":
-            hw = event.get("homework")
-            return (
-                isinstance(hw, dict)
-                and isinstance(hw.get("title"), str)
-                and 0 < len(hw["title"]) <= 500
-                and isinstance(hw.get("questions"), list)
-                and 1 <= len(hw["questions"]) <= 200
-                and type(event.get("demo")) is bool
-            )
-        if kind == "homework_saved":
-            return (
-                isinstance(event.get("work_id"), str)
-                and len(event["work_id"]) <= 256
-                and type(event.get("verified")) is bool
-                and isinstance(event.get("reason"), str)
-                and len(event["reason"]) <= 2000
-            )
         return True
 
     def _fail_protocol(self):
@@ -378,9 +222,7 @@ class Controller(QObject):
             self._kill_timer.start(3000)
 
     def on_finished(self, code, _status):
-        # 开卷与读作业的题图由工作台保留，答题和参考答案进程会继续读取。
-        if code != 0 or not self.keep_image_cache:
-            remove_image_cache(self.image_cache_dir)
+        remove_image_cache(self.image_cache_dir)
         self.image_cache_dir = None
         # Deliver queued done/error events before announcing process exit.
         self._exit_code = code

@@ -10,7 +10,7 @@ from PySide6.QtCore import QCoreApplication, QTimer
 
 from .workbench_backend import WorkbenchBackend
 from .instance import InstanceGuard
-from .config import course_key, data_dir
+from .config import data_dir
 from .image_cache import clear_stale_image_cache
 
 
@@ -27,10 +27,6 @@ previewDiscussion previewActivity reply verifyPending
 listAiProfiles aiProfileAction loadRunHistory prepareRecovery listDraftCopies
 openDraftCopy openSavedDraft setDraftContent setDraftAnswer saveDraftCopy
 exportDraftCopy deleteSavedDraft draftAnswer clearUiFeedback releaseAction
-loadExams openExam setExamAnswer saveExamDraft submitExam verifyExamSubmit
-closeExam exportExam requestExamSuggestions startAutoExam cancelExamTask replyExamInput copyExamServiceConfig
-loadHomework loadHomeworks openHomeworkDraft setHomeworkAnswer saveHomeworkDraft requestHomeworkSuggestions
-exportHomeworkDraft deleteHomeworkDraft closeHomework
 """.split())
 MAX_COMMAND_BYTES = 1024 * 1024
 CLOSE_COMMANDS = frozenset(('close', 'saveAndClose', 'discardAndClose', 'cancelClose'))
@@ -52,8 +48,6 @@ class Bridge:
             "summary": b.changed, "values": b.configChanged,
             "courses": b.coursesChanged, "providers": b.providersChanged,
             "input": b.inputChanged, "draft": b.draftChanged,
-            "exam": b.examChanged, "examProviders": b.examProvidersChanged,
-            "homework": b.homeworkChanged,
         }
         for group, signal in groups.items():
             signal.connect(lambda g=group: self.mark(g))
@@ -94,11 +88,6 @@ class Bridge:
                              aiWarning=b.aiWarning, aiUsage=summary["aiUsage"], draftEditable=b.draftEditable)
             elif name == "courses":
                 state["courses"] = b.courseRows
-                state["courseChoices"] = [
-                    dict(courseId=course["courseId"], clazzId=course["clazzId"], title=course.get("title", ""),
-                         selected=course_key(course) in b.selected)
-                    for course in b.courses
-                ]
             elif name == "draft":
                 state.update(draftFeedback=b.draftFeedback, draftDirty=b.draftDirty,
                              draftFeedbackTone=b.draftFeedbackTone)
@@ -120,7 +109,6 @@ class Bridge:
                   schema=self.backend.schema, releaseInfo=self.backend.releaseInfo,
                   dataExplanation=self.backend.dataExplanation)))
         self.dirty.update(("summary", "values", "courses", "providers", "input", "draft",
-                           "exam", "examProviders", "homework",
                            "tasks", "questions", "discussions", "activities", "attention", "logs"))
         self.flush()
         QTimer.singleShot(0, self.backend.restore_saved_session)
@@ -128,27 +116,18 @@ class Bridge:
 
     def close_request(self, method):
         b = self.backend
-        exam_unsaved = b._exam_dirty
-        homework_unsaved = b._homework_dirty
-        exam_active = b._exam_controller.active
         if method == 'cancelClose':
             if b.settings_close_pending:
                 b.settings_close_pending = False
                 b.schedule_settings_save()
             return None
-        if method == 'close' and (b.settings_dirty or exam_unsaved or homework_unsaved or exam_active):
+        if method == 'close' and b.settings_dirty:
             b.settings_close_pending = True
             b.schedule_settings_save()
             return 'confirm'
         if method == 'saveAndClose':
             if not b.settings_close_pending:
                 raise ValueError('请先请求退出。')
-            if exam_unsaved and not b.saveExamDraft(False):
-                b.settings_close_pending = False
-                return False
-            if homework_unsaved and not b.saveHomeworkDraft(False):
-                b.settings_close_pending = False
-                return False
             if b.settings_dirty and not b._save_settings(exiting=True):
                 b.settings_close_pending = False
                 return False

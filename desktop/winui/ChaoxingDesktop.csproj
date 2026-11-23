@@ -4,8 +4,7 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>ChaoxingDesktop</RootNamespace>
-    <Version>0.7.1</Version>
-    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <Version>0.6.7</Version>
     <Product>ChaoxingDesktop</Product>
     <Description>超星 Windows 桌面版</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>

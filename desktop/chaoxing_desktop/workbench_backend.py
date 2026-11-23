@@ -2,37 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-import copy
 from pathlib import Path
-import sys
 import uuid
 
 from PySide6.QtCore import QObject, Signal, Slot, QTimer
 
 from . import __version__
 from .answers import option_pairs, plain_text, question_images
-from .config import BANKS, ConfigValidationError, Redactor, course_key, data_dir, defaults, exam_answer_config, is_secret, parse_text, resource_root, serialize, to_payload, validate, validate_exam_services
+from .config import BANKS, Redactor, course_key, data_dir, defaults, is_secret, parse_text, serialize, to_payload, validate
 from .controller import Controller
-from .exam_drafts import (
-    EDITABLE_STATES,
-    FINISHED_STATES,
-    STATE_LOCAL_DRAFT,
-    STATE_PLATFORM_SAVED,
-    STATE_REJECTED,
-    STATE_SIMULATED_SUBMITTED,
-    STATE_SUBMIT_UNKNOWN,
-    STATE_SUBMITTED,
-    ExamDraftStore,
-    answer_summary,
-    apply_manual_answer,
-    apply_suggestion,
-    empty_answer,
-    exam_draft_key,
-    merge_platform_answers,
-    question_answered,
-    source_text,
-    state_text,
-)
 from .settings_schema import SCHEMA
 from .settings import restore_credentials, serialize_settings, settings_snapshot
 from .models import LogModel, LogFilter, TaskModel, TERMINAL
@@ -52,16 +30,6 @@ from .draft_copies import DraftCopies, make_copy, fingerprint, editable_source, 
 from .release_info import RELEASE_URLS, verification_info
 from .ai_profiles import AIProfiles
 from .course_progress import CourseProgressCache, progress_key, valid_progress
-from .homework_drafts import (
-    HomeworkDraftStore,
-    apply_homework_manual_answer,
-    apply_homework_suggestion,
-    export_answer_text,
-    export_homework_text,
-    homework_draft_id,
-    homework_summary,
-)
-from .image_cache import paper_image_cache, remove_image_cache
 
 
 class WorkbenchBackend(QObject):
@@ -79,9 +47,6 @@ class WorkbenchBackend(QObject):
     definitionPreviewRequested = Signal(str, bool)
     draftOpened = Signal('QVariantMap')
     draftChanged = Signal()
-    examChanged = Signal()
-    examProvidersChanged = Signal()
-    homeworkChanged = Signal()
 
     def __init__(self, send):
         super().__init__()
@@ -215,9 +180,7 @@ class WorkbenchBackend(QObject):
         self.ai_status = "尚未测试连接"
         self.interaction = {}
         self.provider_order = []
-        self.exam_provider_order = []
         self.sync_providers()
-        self.sync_exam_providers()
         self.log_redactor = Redactor({})
         self.controller = Controller(self)
         self.controller.event.connect(self.on_event)
@@ -230,48 +193,6 @@ class WorkbenchBackend(QObject):
         self._course_controller = Controller(self)
         self._course_controller.event.connect(self.on_course_progress_event)
         self._course_controller.finished.connect(self.on_course_progress_finished)
-        self._exam_controller = Controller(self)
-        self._exam_controller.event.connect(self.on_exam_event)
-        self._exam_controller.finished.connect(self.on_exam_finished)
-        self._exam_controller.busy_changed.connect(lambda _: self.examChanged.emit())
-        self._exam_controller.busy_changed.connect(lambda _: self.homeworkChanged.emit())
-        self._exam_list = []
-        self._exam_current = None
-        self._exam_raw = None
-        self._exam_form_meta = {}
-        self._exam_dirty = False
-        self._exam_course_title = ""
-        self._exam_account_label = ""
-        self._exam_clock_offset_sec = 0.0
-        self._exam_operation = ""
-        self._exam_outcome = False
-        self._exam_identity = None
-        self._exam_input = {}
-        self._exam_feedback = dict(message="读取考试安排后可进入受支持的场次作答。", tone="info")
-        self._exam_assist_state = dict(
-            completed=0,
-            total=0,
-            saved_count=0,
-            auto_mode=False,
-            sync_to_platform=False,
-            auto_submit=False,
-            pending_auto_submit=False,
-            active_question_id="",
-            target_question_ids=[],
-            replace_manual=False,
-            ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
-        )
-        self._homework_list = []
-        self._homework_current = None
-        self._homework_form_meta = {}
-        self._homework_dirty = False
-        self._homework_feedback = dict(message="粘贴超星作业链接后可读取题目并保存本机草稿（不向平台提交）。", tone="info")
-        self._homework_assist_state = dict(
-            completed=0,
-            total=0,
-            replace_manual=False,
-            ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
-        )
         self.configChanged.connect(self.refresh_redactor)
         self._account_rows_cache, self._cookie_exists = [], False
         self._job_scope = {}
@@ -512,29 +433,20 @@ class WorkbenchBackend(QObject):
             self.feedback('profiles', exc, 'danger')
             return []
 
-    def aiProfileAction(self, action, value, target='ai'):
+    def aiProfileAction(self, action, value):
         def run():
             if self.busy:
                 raise ValueError('运行中锁定 AI 档案。')
-            if target not in ('ai', 'exam_ai'):
-                raise ValueError('AI 档案目标配置节无效。')
             store = AIProfiles(data_dir())
             if action == 'save':
-                source = parse_text(serialize(self.config))
-                if target == 'exam_ai':
-                    source['ai'].update(self.config['exam_ai'])
-                store.save(value, source)
+                store.save(value, self.config)
                 self.feedback('profiles', '当前 AI 设置已保存为命名档案，配置与凭据均使用 DPAPI 加密。', 'success')
             elif action == 'load':
                 values = store.load(value)
-                candidate = parse_text(serialize(self.config))
-                candidate[target].update(values)
-                validate(candidate)
+                candidate = parse_text(serialize(self.config)); candidate['ai'].update(values); validate(candidate)
                 self.config = candidate
-                if target == 'ai':
-                    self.ai_status = '已切换档案 · 请主动测试；视觉仅为用户声明'
+                self.ai_status = '已切换档案 · 请主动测试；视觉仅为用户声明'
                 self.settings_edited()
-                self.examChanged.emit()
                 self.feedback('profiles', '已显式切换 AI 档案；没有联网。请检查目标、模型与视觉声明。', 'success')
             elif action == 'delete':
                 store.delete(value)
@@ -554,8 +466,6 @@ class WorkbenchBackend(QObject):
         lines.extend(['运行摘要：按账号最多 20 轮 / 2 MiB，单轮前 1000 个未完成章节定位。',
                       '命名 AI 档案：最多 20 项 / 256 KiB，单份解密前配置最多 16 KiB；满容量阻止新保存。',
                       '人工副本：按账号最多 20 项 / 2 MiB；容量满时阻止新保存，不自动删除人工编辑。',
-                      '考试草稿（exam_drafts/）：单份最多 200 题 / 512 KiB，总计最多 100 份 / 16 MiB；容量满时仅允许清理已交卷旧记录，绝不删除提交结果待核验（submit_unknown）记录。',
-                      '独立作业草稿（homework_drafts/）：按账号最多 50 份 / 4 MiB，单份最多 200 题。读取作业链接后可手动暂存到平台。',
                       '活动意图存储容量满、记录损坏或磁盘失败会阻止新提交；不能通过清理显示解除去重。'])
         return '\n\n'.join(lines)
 
@@ -796,8 +706,7 @@ class WorkbenchBackend(QObject):
 
     @property
     def serviceHealth(self):
-        exam_keys = tuple(f"exam_{k}" for k in self.exam_provider_order) + ("exam_ai",)
-        return {key: self.service_health(key) for key in (*self.provider_order, 'ai', *exam_keys)}
+        return {key: self.service_health(key) for key in (*self.provider_order, 'ai')}
 
     @property
     def attentionModel(self):
@@ -818,24 +727,9 @@ class WorkbenchBackend(QObject):
                      configured=bool(self.config['question_bank'].get(PROVIDER_SPECS[k].secret, '')),
                      health=self.service_health(k)) for k in self.provider_order]
 
-    @property
-    def examProviders(self):
-        enabled = self.enabled_exam_providers()
-        return [dict(key=k, title=PROVIDER_SPECS[k].title, enabled=k in enabled,
-                     secret=PROVIDER_SPECS[k].secret,
-                     configured=bool(self.config['exam_question_bank'].get(PROVIDER_SPECS[k].secret, '')),
-                     health=self.service_health('exam_' + k)) for k in self.exam_provider_order]
-
     def service_fingerprint(self, key):
         import hashlib
-        if key == 'ai':
-            sections = ('ai',)
-        elif key == 'exam_ai':
-            sections = ('exam_ai',)
-        elif isinstance(key, str) and key.startswith('exam_'):
-            sections = ('exam_question_bank',)
-        else:
-            sections = ('question_bank',)
+        sections = ('ai',) if key == 'ai' else ('question_bank',)
         return hashlib.sha256(repr([(s, sorted(self.config[s].items())) for s in sections]).encode()).hexdigest()
 
     def service_health(self, key):
@@ -847,21 +741,17 @@ class WorkbenchBackend(QObject):
 
     @property
     def aiDestination(self):
-        return self._ai_destination_for('ai')
-
-    def _ai_destination_for(self, section: str) -> str:
         from urllib.parse import urlsplit
         try:
-            host = urlsplit(self.config[section]['endpoint']).hostname or '未配置服务地址'
+            host = urlsplit(self.config['ai']['endpoint']).hostname or '未配置服务地址'
         except ValueError:
             host = '服务地址格式需检查'
-        return self.redact(self.config[section]['provider'] + ' · ' + host)
+        return self.redact(self.config['ai']['provider'] + ' · ' + host)
 
     def remember_check(self, key, message):
         self.service_checks[key] = dict(time=datetime.now().strftime('%m-%d %H:%M:%S'),
                                        fingerprint=self.service_fingerprint(key), message=self.redact(message))
         self.providersChanged.emit()
-        self.examProvidersChanged.emit()
 
     @property
     def strategySummary(self):
@@ -893,11 +783,9 @@ class WorkbenchBackend(QObject):
                 'course_progress/：按账号与平台用户隔离的课程进度统计，每份最多 2000 门课程 / 1 MiB，只含课程标识、章节计数和更新时间。可安全删除，读课时后台只读更新。\n'
                 'task_completion/：已核验完成的章节任务缓存，按账号、用户、课程和班级隔离，每门课程最多 10000 项 / 4 MiB，保存章节 ID、标题和确认时间。下次启动直接跳过对应任务的处理与逐章核验，可安全删除，不作为讨论／活动提交凭据。\n'
                 'draft_copies/：按账号隔离的人工编辑副本，最多 20 项 / 2 MiB，含正文和原题，未加密。与生产草稿／意图独立，不能作为提交证据。\n'
-                'exam_drafts/：按账号、平台用户、课程、班级、考试与尝试 ID 隔离的本地考试答卷与交卷意图，最多 100 份 / 16 MiB（单份 512 KiB），含题目与答案，未加密。备份时一并保留，尤其是 submit_unknown 待核验记录。\n'
-                'homework_drafts/：按账号隔离的独立作业本机草稿，最多 50 份 / 4 MiB（单份最多 200 题），含题目、答案与来源，未加密。应用支持本机保存、导出和用户确认后的平台暂存。\n'
                 'ai_profiles.json：最多 20 个命名 AI 配置；配置与独立凭据用 DPAPI 加密，不会自动切换服务。完整 INI 不包含这些档案。\n'
                 'logs/（或自选目录）：已脱敏日志，单文件约 10 MiB、总量 100 MiB、保留 14 天。课程与题目内容未自动匿名。日志导出仅含当前保留快照。\n\n'
-                '备份清单：关闭应用后保留整个 profile，包括 settings、accounts、discussions、activities、run_summaries、draft_copies、exam_drafts、homework_drafts、ai_profiles.json。INI 不是完整备份。恢复前保留原件；跨机凭据需重新配置。\n'
+                '备份清单：关闭应用后保留整个 profile，包括 settings、accounts、discussions、activities、run_summaries、draft_copies、ai_profiles.json。INI 不是完整备份。恢复前保留原件；跨机凭据需重新配置。\n'
                 '排障配置仅含允许的非敏感策略和版本，不含地址、账号、密钥、正文或未知扩展字段。完整 INI 含明文凭据，仅用于可信的个人备份。')
 
     def notify(self, message, tone="info"):
@@ -925,13 +813,6 @@ class WorkbenchBackend(QObject):
     def enabled_providers(self):
         return [s for s in self.config["question_bank"]["providers"].split(",") if s]
 
-    def sync_exam_providers(self):
-        enabled = self.enabled_exam_providers()
-        self.exam_provider_order = enabled + [k for _, k in BANKS if k not in enabled]
-
-    def enabled_exam_providers(self):
-        return [s for s in self.config["exam_question_bank"]["providers"].split(",") if s]
-
     @property
     def accountRows(self):
         return [dict(row) for row in self._account_rows_cache]
@@ -958,7 +839,6 @@ class WorkbenchBackend(QObject):
 
     def reset_account_view(self):
         self.cancel_course_progress()
-        self._reset_exam_state()
         self._resume = None
         self._course_progress.clear()
         self.verification_progress = {}
@@ -1064,14 +944,8 @@ class WorkbenchBackend(QObject):
         if self._browser_login:
             self._browser_login.cancel()
 
-    def _exam_locked(self) -> bool:
-        return self._exam_controller.active or self._exam_current is not None or self._homework_current is not None
-
     def addAccount(self):
         if self.busy:
-            return
-        if self._exam_locked():
-            self.notify('请先关闭当前考试答题视图或停止考试操作，再添加账号。', 'warning')
             return
         def run():
             store = self.require_account_store()
@@ -1084,9 +958,6 @@ class WorkbenchBackend(QObject):
     def switchAccount(self, account_id):
         if self.busy:
             self.notify('请先停止当前任务，再切换账号。', 'warning')
-            return
-        if self._exam_locked():
-            self.notify('请先关闭当前考试答题视图或停止考试操作，再切换账号。', 'warning')
             return
         def run():
             store = self.require_account_store()
@@ -1117,9 +988,6 @@ class WorkbenchBackend(QObject):
     def removeAccount(self, expected_account=''):
         if self.busy:
             return
-        if self._exam_locked():
-            self.notify('请先关闭当前考试答题视图或停止考试操作，再删除账号。', 'warning')
-            return
         def run():
             store = self.require_account_store()
             if expected_account and store.active != expected_account:
@@ -1145,47 +1013,25 @@ class WorkbenchBackend(QObject):
             if key == "provider" and value == "SiliconFlow":
                 self.config["ai"]["endpoint"] = "https://api.siliconflow.cn/v1"
                 self.config["ai"]["model"] = "deepseek-ai/DeepSeek-R1"
-        elif section == "exam_ai":
-            if key == "provider" and value == "SiliconFlow":
-                self.config["exam_ai"]["endpoint"] = "https://api.siliconflow.cn/v1"
-                self.config["exam_ai"]["model"] = "deepseek-ai/DeepSeek-R1"
         self.settings_edited()
-        if section in ("exam", "exam_ai", "exam_question_bank", "ai", "question_bank"):
-            if section == "exam_question_bank":
-                self.examProvidersChanged.emit()
-            self.examChanged.emit()
 
-    def toggleProvider(self, key, checked, target="question_bank"):
-        if target not in ("question_bank", "exam_question_bank"):
+    def toggleProvider(self, key, checked):
+        if self.busy or key not in self.provider_order:
             return
-        order = self.exam_provider_order if target == "exam_question_bank" else self.provider_order
-        if self.busy or key not in order:
-            return
-        enabled = set(self.enabled_exam_providers() if target == "exam_question_bank" else self.enabled_providers())
+        enabled = set(self.enabled_providers())
         enabled.add(key) if checked else enabled.discard(key)
-        self.setValue(target, "providers", ",".join(k for k in order if k in enabled))
-        if target == "exam_question_bank":
-            self.examProvidersChanged.emit()
-            self.examChanged.emit()
-        else:
-            self.providersChanged.emit()
+        self.setValue("question_bank", "providers", ",".join(k for k in self.provider_order if k in enabled))
+        self.providersChanged.emit()
 
-    def moveProvider(self, index, delta, target="question_bank"):
-        if target not in ("question_bank", "exam_question_bank"):
+    def moveProvider(self, index, delta):
+        target = index + delta
+        if self.busy or not (0 <= index < len(self.provider_order) and 0 <= target < len(self.provider_order)):
             return
-        order = self.exam_provider_order if target == "exam_question_bank" else self.provider_order
-        dest = index + delta
-        if self.busy or not (0 <= index < len(order) and 0 <= dest < len(order)):
-            return
-        order[index], order[dest] = order[dest], order[index]
-        enabled = self.enabled_exam_providers() if target == "exam_question_bank" else self.enabled_providers()
-        self.setValue(target, "providers", ",".join(k for k in order if k in enabled))
+        self.provider_order[index], self.provider_order[target] = self.provider_order[target], self.provider_order[index]
+        enabled = self.enabled_providers()
+        self.setValue("question_bank", "providers", ",".join(k for k in self.provider_order if k in enabled))
         self.changed.emit()
-        if target == "exam_question_bank":
-            self.examProvidersChanged.emit()
-            self.examChanged.emit()
-        else:
-            self.providersChanged.emit()
+        self.providersChanged.emit()
 
     def searchCourses(self, value):
         self.search = value
@@ -1246,36 +1092,20 @@ class WorkbenchBackend(QObject):
                 raise ValueError("登录信息已改变，请重新读取课程（包含本机会话文件变化）。")
             validate(config, login=True, cookie_path=self.cookie_path())
         if action == "check_bank":
-            provider = selected[0]
-            section = selected[1] if len(selected) > 1 else "question_bank"
-            self.check_target = f"exam_{provider}" if section == "exam_question_bank" else provider
+            target = selected[0]
+            self.check_target = target
             isolated = parse_text(serialize(config))
-            if section == "exam_question_bank":
-                isolated["question_bank"] = dict(isolated["exam_question_bank"])
-            isolated["question_bank"]["providers"] = provider
+            isolated["question_bank"]["providers"] = target
             isolated["ai"]["enabled"] = "false"
             isolated["notification"]["provider"] = ""
-            try:
-                validate(isolated, services=True, _validate_exam=False)
-            except ConfigValidationError as exc:
-                mapped = "exam_question_bank" if section == "exam_question_bank" and exc.section == "question_bank" else exc.section
-                raise ConfigValidationError(str(exc), mapped, exc.key) from None
+            validate(isolated, services=True)
             config = isolated
         if action == "check_ai":
-            section = selected[0] if selected else "ai"
-            self.check_target = "exam_ai" if section == "exam_ai" else "ai"
             ai_only = parse_text(serialize(config))
-            if section == "exam_ai":
-                ai_only["ai"] = dict(ai_only["exam_ai"])
             ai_only["ai"]["enabled"] = "true"
             ai_only["question_bank"]["providers"] = ""
             ai_only["notification"]["provider"] = ""
-            try:
-                validate(ai_only, services=True, _validate_exam=False)
-            except ConfigValidationError as exc:
-                mapped = "exam_ai" if section == "exam_ai" and exc.section == "ai" else exc.section
-                raise ConfigValidationError(str(exc), mapped, exc.key) from None
-            config = ai_only
+            validate(ai_only, services=True)
         if action == 'discussion_preview':
             isolated = parse_text(serialize(config))
             isolated['question_bank']['providers'] = ''
@@ -1752,12 +1582,12 @@ class WorkbenchBackend(QObject):
             self.notify(self.bank_status, 'success')
         self.execute(run)
 
-    def checkBank(self, provider, target='question_bank'):
-        if provider in PROVIDER_SPECS and target in ('question_bank', 'exam_question_bank'):
-            self.execute(lambda: self.begin('check_bank', selected=[provider, target]))
+    def checkBank(self, provider):
+        if provider in PROVIDER_SPECS:
+            self.execute(lambda: self.begin('check_bank', selected=[provider]))
 
-    def definitionAction(self, action, target='question_bank'):
-        if self.busy or target not in ('question_bank', 'exam_question_bank'):
+    def definitionAction(self, action):
+        if self.busy:
             return
         def run():
             from .declarative import TEMPLATE, validate_definition, preview_definition
@@ -1772,11 +1602,10 @@ class WorkbenchBackend(QObject):
                     raise ValueError('题库定义超过 64 KiB')
                 definition, preview = preview_definition(raw.decode('utf-8-sig'))
                 self._definition_import = (json.dumps(definition, ensure_ascii=False),
-                                           self.config[target]['declarative_definition'],
-                                           target) if definition else None
+                                           self.config['question_bank']['declarative_definition']) if definition else None
                 self.definitionPreviewRequested.emit(self.redact(preview), definition is not None)
             else:
-                text = self.config[target]['declarative_definition']
+                text = self.config['question_bank']['declarative_definition']
                 definition = validate_definition(text) if text.strip() else TEMPLATE
                 name = self.selected_path
                 if name:
@@ -1787,16 +1616,14 @@ class WorkbenchBackend(QObject):
         pending, self._definition_import = self._definition_import, None
         if not accepted or not pending:
             return
-        target = pending[2] if len(pending) > 2 else 'question_bank'
-        if self.busy or self.config[target]['declarative_definition'] != pending[1]:
+        if self.busy or self.config['question_bank']['declarative_definition'] != pending[1]:
             self.notify('当前定义或运行状态已变化，请重新导入预览。', 'warning')
             return
-        self.setValue(target, 'declarative_definition', pending[0])
+        self.setValue('question_bank', 'declarative_definition', pending[0])
         self.notify('已导入受限定义，Token 需单独填写并保存。', 'success')
 
-    def checkAi(self, target='ai'):
-        if target in ('ai', 'exam_ai'):
-            self.execute(lambda: self.begin("check_ai", selected=[target]))
+    def checkAi(self):
+        self.execute(lambda: self.begin("check_ai"))
 
     def execute(self, command, scope=''):
         if scope:
@@ -2054,11 +1881,8 @@ class WorkbenchBackend(QObject):
             return
         elif kind == "ai_check":
             self.outcome = True
-            target_key = self.check_target if self.check_target in ('ai', 'exam_ai') else 'ai'
-            status_msg = "服务响应正常 · 图片识别仍需实测"
-            if target_key == 'ai':
-                self.ai_status = status_msg
-            self.remember_check(target_key, status_msg)
+            self.ai_status = "服务响应正常 · 图片识别仍需实测"
+            self.remember_check('ai', self.ai_status)
             self.notify("AI 连接测试通过。", "success")
         elif kind == "input":
             if self.controller.stopping:
@@ -2087,10 +1911,8 @@ class WorkbenchBackend(QObject):
             self.outcome = True
             self.mode = "已停止" if kind == "cancelled" else "运行失败"
             if self.operation == "check_ai":
-                target_key = self.check_target if self.check_target in ('ai', 'exam_ai') else 'ai'
-                if target_key == 'ai':
-                    self.ai_status = "测试未通过 · 请检查参数"
-                self.remember_check(target_key, event.get('message', "测试未通过 · 请检查参数"))
+                self.ai_status = "测试未通过 · 请检查参数"
+                self.remember_check('ai', event.get('message', self.ai_status))
             elif self.operation == 'check_bank':
                 self.remember_check(self.check_target, event.get('message', '测试失败'))
             self.append_log(event.get("message", "后台运行失败"), "ERROR")
@@ -2206,7 +2028,7 @@ class WorkbenchBackend(QObject):
                     self.pageRequested.emit(1 if page == 'learning' else 3 if page == 'advanced' else 2)
                     self.fieldRequested.emit(error.section, error.key)
                     return
-            if error.section in ('question_bank', 'exam', 'exam_ai', 'exam_question_bank'):
+            if error.section == 'question_bank':
                 self.pageRequested.emit(2)
                 self.fieldRequested.emit(error.section, error.key)
             return
@@ -2231,12 +2053,6 @@ class WorkbenchBackend(QObject):
         self._settings_timer.stop()
         self.stop()
         self.cancel_course_progress()
-        if self._exam_controller.active:
-            self._exam_controller.stop()
-            if not self._exam_controller.process.waitForFinished(3000):
-                self._exam_controller.process.kill()
-                self._exam_controller.process.waitForFinished(1000)
-        remove_image_cache(paper_image_cache(data_dir()))
         if self._course_controller.active:
             if not self._course_controller.process.waitForFinished(1000):
                 self._course_controller.process.kill()
@@ -2269,10 +2085,7 @@ class WorkbenchBackend(QObject):
                     self.config = new
                     self.reset_account_view()
                     self.sync_providers()
-                    self.sync_exam_providers()
                     self.providersChanged.emit()
-                    self.examProvidersChanged.emit()
-                    self.examChanged.emit()
                     self.ai_status = "配置已导入 · 请重新测试"
                     self.settings_edited()
                 else:
@@ -2319,1412 +2132,3 @@ class WorkbenchBackend(QObject):
             self.log_save_error = ""
             self.notify(f"已删除当前日志目录中的 {count} 个应用日志文件，并清空显示。后续日志会新建文件。", "success")
         self.execute(run)
-
-    # ── 考试模块状态与桥接命令 ──────────────────────────────────────────────────
-
-    def _reset_exam_state(self):
-        if self._exam_controller.active:
-            self._exam_controller.stop()
-        remove_image_cache(paper_image_cache(data_dir()))
-        self._exam_list = []
-        self._exam_current = None
-        self._exam_raw = None
-        self._exam_form_meta = {}
-        self._exam_dirty = False
-        self._exam_course_title = ""
-        self._exam_account_label = ""
-        self._exam_clock_offset_sec = 0.0
-        self._exam_operation = ""
-        self._exam_outcome = False
-        self._exam_identity = None
-        self._exam_input = {}
-        self._exam_feedback = dict(message="读取考试安排后可进入受支持的场次作答。", tone="info")
-        self._exam_assist_state = dict(
-            completed=0,
-            total=0,
-            saved_count=0,
-            auto_mode=False,
-            sync_to_platform=False,
-            auto_submit=False,
-            pending_auto_submit=False,
-            active_question_id="",
-            target_question_ids=[],
-            replace_manual=False,
-            ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
-        )
-        self._homework_list = []
-        self._homework_current = None
-        self._homework_form_meta = {}
-        self._homework_dirty = False
-        self._homework_feedback = dict(message="粘贴超星作业链接后可读取题目并保存本机草稿（不向平台提交）。", tone="info")
-        self._homework_assist_state = dict(
-            completed=0,
-            total=0,
-            replace_manual=False,
-            ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
-        )
-        self.examChanged.emit()
-        self.homeworkChanged.emit()
-
-    def _exam_account_context(self) -> tuple[str, str, str]:
-        if self.demo_mode:
-            return "offline-demo", "demo-uid", "离线示例"
-        if self.account_store and self.account_store.active:
-            row = self.account_store.get(self.account_store.active)
-            if row:
-                return row["id"], row.get("uid") or "", row["label"]
-        return "", "", "未选择"
-
-    def _exam_identity_snapshot(self):
-        if self.demo_mode:
-            return ("demo",)
-        acc_id, uid, _ = self._exam_account_context()
-        cookie = self.cookie_path() if self.account_store and self.account_store.active else None
-        mtime = cookie.stat().st_mtime_ns if cookie and cookie.exists() else None
-        return ("real", acc_id, uid, mtime)
-
-    def _exam_notify(self, message, tone="info"):
-        self._exam_feedback = dict(message=self.redact(message), tone=tone)
-        self.examChanged.emit()
-
-    def _exam_store(self) -> ExamDraftStore:
-        return ExamDraftStore(data_dir())
-
-    def _exam_default_attempt_id(self, exam_id: str) -> str:
-        if self.demo_mode or exam_id.startswith("demo-"):
-            return "demo-attempt-1"
-        return "attempt-1"
-
-    def _exam_draft_for_entry(self, entry: dict) -> tuple[dict | None, bytes | None, str]:
-        acc_id, uid, _ = self._exam_account_context()
-        if not acc_id or not uid:
-            return None, None, ""
-        exam_id = str(entry.get("examId", ""))
-        course_id = str(entry.get("courseId", ""))
-        clazz_id = str(entry.get("clazzId", ""))
-        attempt_id = str(entry.get("attemptId") or self._exam_default_attempt_id(exam_id))
-        if not all((course_id, clazz_id, exam_id, attempt_id)):
-            return None, None, ""
-        key = exam_draft_key(acc_id, uid, course_id, clazz_id, exam_id, attempt_id)
-        rec, raw = self._exam_store().read(key)
-        return rec, raw, key
-
-    def _exam_effective_summaries(self) -> tuple[str, str]:
-        effective, _ = exam_answer_config(self.config)
-        ai_sec = "exam_ai" if self.config["exam"]["ai_source"] == "custom" else "ai"
-        ai_enabled = effective["ai"]["enabled"].lower() == "true"
-        if ai_enabled:
-            model = effective["ai"]["model"].strip() or "未填写模型"
-            ai_summary = self.redact(f"{self._ai_destination_for(ai_sec)} · {model}")
-        else:
-            ai_summary = "未启用"
-        providers = [
-            PROVIDER_SPECS[k].title
-            for k in effective["question_bank"]["providers"].split(",")
-            if k.strip() in PROVIDER_SPECS
-        ]
-        bank_summary = " → ".join(providers) if providers else "未启用"
-        return ai_summary, bank_summary
-
-    def _exam_remaining_seconds(self, deadline_utc: str) -> int:
-        if not deadline_utc:
-            return 0
-        from datetime import timezone
-        try:
-            deadline = datetime.fromisoformat(deadline_utc)
-            if deadline.tzinfo is None:
-                deadline = deadline.replace(tzinfo=timezone.utc)
-            now_adjusted = datetime.now(timezone.utc).timestamp() + self._exam_clock_offset_sec
-            return max(0, int(round(deadline.timestamp() - now_adjusted)))
-        except ValueError:
-            return 0
-
-    @property
-    def exam(self) -> dict:
-        store = self._exam_store()
-        acc_id, uid, acc_label = self._exam_account_context()
-        list_rows = []
-        for item in self._exam_list:
-            row = dict(item)
-            has_draft = False
-            if acc_id and uid and all(row.get(k) for k in ("courseId", "clazzId", "examId")):
-                attempt_id = str(row.get("attemptId") or self._exam_default_attempt_id(row["examId"]))
-                try:
-                    key = exam_draft_key(acc_id, uid, row["courseId"], row["clazzId"], row["examId"], attempt_id)
-                    draft_rec, _ = store.read(key)
-                    if draft_rec is not None:
-                        has_draft = True
-                        row["draftState"] = draft_rec["state"]
-                        row["draftStateText"] = state_text(draft_rec["state"])
-                        if draft_rec["state"] in (STATE_SUBMIT_UNKNOWN, STATE_SUBMITTED, STATE_SIMULATED_SUBMITTED):
-                            row["status"] = draft_rec["state"]
-                            row["statusText"] = state_text(draft_rec["state"])
-                            if draft_rec.get("reason"):
-                                row["reason"] = draft_rec["reason"]
-                except (OSError, ValueError):
-                    pass
-            row["hasLocalDraft"] = has_draft
-            list_rows.append(row)
-
-        current_payload = {}
-        if self._exam_current is not None:
-            rec = self._exam_current
-            summary = answer_summary(rec)
-            questions_out = []
-            for q in sorted(rec["questions"], key=lambda item: item.get("no", 0)):
-                qid = q["id"]
-                ans = rec["answers"].get(qid) or empty_answer()
-                src = ans.get("source", "")
-                q_out = {
-                    "id": qid,
-                    "no": q["no"],
-                    "type": q["type"],
-                    "title": q["title"],
-                    "options": [dict(opt) for opt in q.get("options", [])],
-                    "blankCount": q.get("blank_count", 0),
-                    "score": q.get("score", ""),
-                    "images": list(q.get("images", [])),
-                    "answered": question_answered(q, ans),
-                    "answer": {
-                        "option_ids": list(ans.get("option_ids", [])),
-                        "blanks": list(ans.get("blanks", [])),
-                        "text": ans.get("text", ""),
-                    },
-                    "source": src,
-                    "sourceText": source_text(src),
-                    "reason": ans.get("reason", ""),
-                }
-                questions_out.append(q_out)
-            current_payload = {
-                "examId": rec["exam_id"],
-                "attemptId": rec["attempt_id"],
-                "courseId": rec["course_id"],
-                "clazzId": rec["clazz_id"],
-                "title": rec["title"],
-                "courseTitle": self._exam_course_title,
-                "accountLabel": self._exam_account_label or acc_label,
-                "deadlineUtc": rec["deadline_utc"],
-                "remainingSeconds": self._exam_remaining_seconds(rec["deadline_utc"]),
-                "canSaveToPlatform": bool(self._exam_form_meta) and not self.demo_mode,
-                "state": rec["state"],
-                "stateText": state_text(rec["state"]),
-                "reason": rec.get("reason", ""),
-                "dirty": self._exam_dirty,
-                "answeredCount": summary["answeredCount"],
-                "totalCount": summary["totalCount"],
-                "unansweredNumbers": summary["unansweredNumbers"],
-                "questions": questions_out,
-            }
-
-        ai_summary, bank_summary = self._exam_effective_summaries()
-        assist_usage = self._exam_assist_state["ai_usage"]
-        assist_payload = {
-            "enabled": self.config["exam"]["assist_enabled"].lower() == "true",
-            "running": self._exam_controller.active and self._exam_operation in ("exam_assist", "exam_auto"),
-            "autoMode": bool(self._exam_assist_state.get("auto_mode", False)) and self._exam_operation == "exam_auto",
-            "syncToPlatform": bool(self._exam_assist_state.get("sync_to_platform", False)),
-            "autoSubmit": bool(self._exam_assist_state.get("auto_submit", False)),
-            "aiSource": self.config["exam"]["ai_source"],
-            "bankSource": self.config["exam"]["bank_source"],
-            "aiSummary": ai_summary,
-            "bankSummary": bank_summary,
-            "completed": self._exam_assist_state["completed"],
-            "total": self._exam_assist_state["total"],
-            "savedCount": int(self._exam_assist_state.get("saved_count", 0)),
-            "activeQuestionId": str(self._exam_assist_state.get("active_question_id", "")),
-            "aiUsage": {
-                "requests": assist_usage["requests"],
-                "limit": assist_usage["limit"],
-                "tokens": assist_usage["tokens"],
-            },
-        }
-        return {
-            "list": list_rows,
-            "current": current_payload,
-            "assist": assist_payload,
-            "input": dict(self._exam_input),
-            "busy": self._exam_controller.active,
-            "operation": self._exam_operation if self._exam_controller.active else "",
-            "feedback": dict(self._exam_feedback),
-        }
-
-    def _start_exam_worker(self, action: str, **extra):
-        if self._exam_controller.active:
-            raise ValueError("已有考试操作正在进行，请稍候。")
-        if self._course_controller.active:
-            # 停止后台课程进度轮询，避免与考试／作业请求并发触发超星 HTTP 202 频控
-            self.cancel_course_progress()
-        demo = self.demo_mode
-        if action in ("exam_assist", "exam_auto", "homework_assist"):
-            if not demo:
-                validate_exam_services(self.config, services=True)
-                effective, _ = exam_answer_config(self.config)
-            else:
-                validate_exam_services(self.config, services=False)
-                effective, _ = exam_answer_config(self.config)
-            payload_cfg = to_payload(effective)
-        else:
-            base_cfg = defaults() if demo else self.config
-            validate(base_cfg)
-            payload_cfg = to_payload(base_cfg)
-
-        command = dict(
-            action=action,
-            demo=demo,
-            config=payload_cfg,
-            data_dir=str(data_dir()),
-            **extra,
-        )
-        acc_id, uid, _ = self._exam_account_context()
-        if not demo:
-            if not acc_id or not uid:
-                raise ValueError("请先登录并读取课程以确认账号身份。")
-            cookie = self.cookie_path()
-            if not cookie.is_file():
-                raise ValueError("未找到当前账号的本机 Cookie 会话，请先重新登录。")
-            command.update(
-                account_id=acc_id,
-                account_uid=uid,
-                cookie_mtime_ns=cookie.stat().st_mtime_ns,
-            )
-        self._exam_operation = action
-        self._exam_outcome = False
-        self._exam_identity = self._exam_identity_snapshot()
-        self._exam_input = {}
-        self._exam_controller.start(command)
-        self.examChanged.emit()
-
-    def _resolve_exam_courses(self, course_keys="") -> list[dict]:
-        if course_keys == "":
-            return []
-        if isinstance(course_keys, str):
-            keys = course_keys.split(",")
-        elif isinstance(course_keys, (list, tuple, set)) and all(isinstance(key, str) for key in course_keys):
-            keys = course_keys
-        else:
-            raise ValueError("课程选择格式无效，请重新选择课程。")
-        wanted = {key.strip() for key in keys}
-        if not wanted or "" in wanted:
-            raise ValueError("请至少选择一门有效课程。")
-        missing = set(wanted)
-        matched = []
-        for c in self.courses:
-            cid = str(c.get("courseId") or "").strip()
-            clazz_id = str(c.get("clazzId") or "").strip()
-            matches = wanted.intersection((f"{cid}:{clazz_id}", cid))
-            if matches:
-                matched.append(dict(c))
-                missing.difference_update(matches)
-        if missing:
-            raise ValueError("部分所选课程已失效，请点击「读取课程」刷新课程列表后重新选择。")
-        return matched
-
-    @staticmethod
-    def _ensure_vendor_path():
-        vendor = str(resource_root() / "vendor/chaoxing")
-        if vendor not in sys.path:
-            sys.path.insert(0, vendor)
-
-    def _execute_exam(self, command):
-        try:
-            command()
-            return True
-        except Exception as exc:
-            self._exam_notify(str(exc), "danger")
-            self.notify(exc, "danger")
-            if hasattr(exc, 'section'):
-                self.locate_invalid_field(exc)
-            return False
-
-    def _execute_homework(self, command):
-        try:
-            command()
-            return True
-        except Exception as exc:
-            self._homework_notify(str(exc), "danger")
-            self.notify(exc, "danger")
-            if hasattr(exc, 'section'):
-                self.locate_invalid_field(exc)
-            return False
-
-    def loadExams(self, course_keys=""):
-        def run():
-            if self._exam_controller.active:
-                raise ValueError("正在执行考试操作，请稍候。")
-            target_courses = self._resolve_exam_courses(course_keys)
-            extra = {"courses": target_courses} if target_courses else {}
-            self._start_exam_worker("exam_list", **extra)
-            if len(target_courses) == 1:
-                scope = f"「{target_courses[0].get('title', '')}」"
-            elif target_courses:
-                scope = f"所选 {len(target_courses)} 门课程"
-            else:
-                scope = "全部课程"
-            self._exam_notify(f"正在读取{scope}的考试安排…", "info")
-        return self._execute_exam(run)
-
-    def openExam(self, exam_id, confirmed=False):
-        exam_id = str(exam_id or "").strip()
-        if not exam_id:
-            raise ValueError("请选择要进入的考试场次。")
-        if self._exam_controller.active:
-            raise ValueError("正在执行考试操作，请稍候。")
-        if self._exam_dirty:
-            raise ValueError("当前试卷尚有未保存的修改，请先保存或关闭当前试卷。")
-        entry = next((item for item in self._exam_list if item.get("examId") == exam_id), None)
-        if entry is None:
-            raise ValueError("未找到对应的考试场次，请先刷新考试安排。")
-        draft_rec, draft_raw, _ = self._exam_draft_for_entry(entry)
-        read_only = draft_rec is not None and draft_rec["state"] not in EDITABLE_STATES
-        if not entry.get("nativeSupported", False) and not read_only:
-            raise ValueError(entry.get("reason") or "该场考试不支持在桌面工作台内作答，请打开官方入口。")
-        _, _, acc_label = self._exam_account_context()
-        if not confirmed:
-            return {
-                "examId": exam_id,
-                "title": entry.get("title", ""),
-                "courseTitle": entry.get("courseTitle", ""),
-                "accountLabel": acc_label,
-                "timeText": entry.get("timeText", ""),
-                "modeText": entry.get("modeText", ""),
-                "limitMinutes": entry.get("limitMinutes", 0),
-                "hasLocalDraft": draft_rec is not None,
-                "draftState": draft_rec["state"] if draft_rec else "",
-                "draftStateText": state_text(draft_rec["state"]) if draft_rec else "",
-                "startsTimer": not read_only and (draft_rec is None or not self.demo_mode),
-            }
-        self._exam_course_title = entry.get("courseTitle", "")
-        self._exam_account_label = acc_label
-        if read_only:
-            self._exam_current = draft_rec
-            self._exam_raw = draft_raw
-            self._exam_form_meta = {}
-            self._exam_notify("已打开本机答卷。", "info")
-            return True
-        self._start_exam_worker("exam_open", exam_id=exam_id, exam_entry=entry)
-        self._exam_notify(f"正在打开试卷「{entry.get('title', exam_id)}」…", "info")
-        return True
-
-    def _require_exam_in_time(self):
-        if self._exam_remaining_seconds(self._exam_current["deadline_utc"]) <= 0:
-            raise ValueError("已到服务端截止时间，请在官方入口确认是否已收卷。")
-
-    def setExamAnswer(self, question_id, answer):
-        def run():
-            if self._exam_current is None:
-                raise ValueError("当前未打开任何试卷。")
-            self._require_exam_in_time()
-            if self._exam_controller.active and self._exam_operation in ("exam_submit", "exam_save", "exam_verify"):
-                raise ValueError("正在保存或交卷，暂不能修改答案。")
-            apply_manual_answer(self._exam_current, str(question_id), answer if isinstance(answer, dict) else {})
-            self._exam_dirty = True
-            self._exam_notify("已记录手动修改（尚未保存到本机草稿）。", "info")
-        return self._execute_exam(run)
-
-    def saveExamDraft(self, to_platform=False):
-        def run():
-            if self._exam_current is None:
-                raise ValueError("当前未打开任何试卷。")
-            if self._exam_current["state"] == STATE_SUBMIT_UNKNOWN:
-                raise ValueError("当前答卷处于「提交结果待核验」状态，禁止覆盖保存。")
-            if self._exam_current["state"] in FINISHED_STATES:
-                raise ValueError("该试卷已交卷，无需再次保存草稿。")
-            if to_platform and not self.demo_mode:
-                self._require_exam_in_time()
-                if not self._exam_form_meta:
-                    raise ValueError("缺少平台保存上下文，请重新打开试卷。")
-            updated, raw = self._exam_store().save(self._exam_current, self._exam_raw)
-            self._exam_current = updated
-            self._exam_raw = raw
-            self._exam_dirty = False
-            if to_platform and not self.demo_mode:
-                self._start_exam_worker(
-                    "exam_save",
-                    exam_id=updated["exam_id"],
-                    attempt_id=updated["attempt_id"],
-                    paper=updated,
-                    form_meta=self._exam_form_meta,
-                    answers=updated["answers"],
-                )
-                self._exam_notify("本机草稿已保存，正在同步到平台…", "info")
-            else:
-                self._exam_notify("考试草稿已保存到本机。", "success")
-        return self._execute_exam(run)
-
-    def submitExam(self, exam_id, attempt_id):
-        def run():
-            if self._exam_controller.active:
-                raise ValueError("已有考试操作正在进行，请稍候。")
-            if self._exam_current is None:
-                raise ValueError("请先打开试卷核对后再交卷。")
-            rec = self._exam_current
-            acc_id, uid, _ = self._exam_account_context()
-            if (
-                str(exam_id) != rec["exam_id"]
-                or str(attempt_id) != rec["attempt_id"]
-                or acc_id != rec["account_id"]
-                or uid != rec["uid"]
-            ):
-                raise ValueError("当前账号或试卷标识不一致，已取消交卷；请重新打开试卷核对。")
-            if rec["state"] == STATE_SUBMIT_UNKNOWN:
-                raise ValueError("上次交卷结果尚待核验，禁止重复提交；请先点击「核验交卷结果」或到官方入口确认。")
-            if rec["state"] in FINISHED_STATES:
-                raise ValueError("该试卷已交卷，禁止重复提交。")
-            self._require_exam_in_time()
-            if not self.demo_mode and not self._exam_form_meta:
-                raise ValueError("缺少试卷交卷上下文，请重新打开试卷。")
-            store = self._exam_store()
-            if self._exam_dirty or self._exam_raw is None:
-                rec, self._exam_raw = store.save(rec, self._exam_raw)
-                self._exam_current = rec
-                self._exam_dirty = False
-            key = exam_draft_key(
-                rec["account_id"],
-                rec["uid"],
-                rec["course_id"],
-                rec["clazz_id"],
-                rec["exam_id"],
-                rec["attempt_id"],
-            )
-            submitting, raw_submitting = store.begin_submit(key, self._exam_raw)
-            self._exam_current = submitting
-            self._exam_raw = raw_submitting
-            self._exam_dirty = False
-            self._start_exam_worker(
-                "exam_submit",
-                exam_id=submitting["exam_id"],
-                attempt_id=submitting["attempt_id"],
-                paper=submitting,
-                form_meta=self._exam_form_meta,
-                answers=submitting["answers"],
-            )
-            self._exam_notify("已记录交卷意图，正在等待回执…", "warning")
-        return self._execute_exam(run)
-
-    def verifyExamSubmit(self, exam_id, attempt_id):
-        def run():
-            if self._exam_controller.active:
-                raise ValueError("已有考试操作正在进行，请稍候。")
-            acc_id, uid, _ = self._exam_account_context()
-            exam_id_str = str(exam_id or "").strip()
-            attempt_id_str = str(attempt_id or "").strip()
-            course_id = ""
-            clazz_id = ""
-            if self._exam_current and self._exam_current["exam_id"] == exam_id_str:
-                course_id = self._exam_current["course_id"]
-                clazz_id = self._exam_current["clazz_id"]
-                if not attempt_id_str:
-                    attempt_id_str = self._exam_current["attempt_id"]
-            else:
-                entry = next((item for item in self._exam_list if item.get("examId") == exam_id_str), None)
-                if entry:
-                    course_id = str(entry.get("courseId", ""))
-                    clazz_id = str(entry.get("clazzId", ""))
-                    if not attempt_id_str:
-                        attempt_id_str = str(entry.get("attemptId") or self._exam_default_attempt_id(exam_id_str))
-            if not all((acc_id, uid, course_id, clazz_id, exam_id_str, attempt_id_str)):
-                raise ValueError("无法定位待核验的考试记录。")
-            key = exam_draft_key(acc_id, uid, course_id, clazz_id, exam_id_str, attempt_id_str)
-            rec, _ = self._exam_store().read(key)
-            if rec is None or rec["state"] != STATE_SUBMIT_UNKNOWN:
-                raise ValueError("当前试卷不在「提交结果待核验」状态。")
-            if self.demo_mode:
-                settled, raw = self._exam_store().settle_verify(
-                    key, False, "离线演示模式不连接真实平台，保持待核验状态。"
-                )
-                if self._exam_current and self._exam_current["exam_id"] == exam_id_str:
-                    self._exam_current = settled
-                    self._exam_raw = raw
-                self._exam_notify(settled["reason"], "warning")
-                return
-            entry = next((item for item in self._exam_list if item.get("examId") == exam_id_str), None)
-            cpi = str(entry.get("cpi", "0")) if entry else "0"
-            self._start_exam_worker(
-                "exam_verify",
-                exam_id=exam_id_str,
-                attempt_id=attempt_id_str,
-                course_id=course_id,
-                clazz_id=clazz_id,
-                cpi=cpi,
-            )
-            self._exam_notify("正在只读核验平台收卷状态…", "info")
-        return self._execute_exam(run)
-
-    def exportExam(self):
-        rec = self._exam_current
-        if rec is None or rec["state"] not in FINISHED_STATES:
-            raise ValueError("请先打开本机的已交卷答卷。")
-        return export_answer_text(rec, "考试答卷", f"状态：{state_text(rec['state'])}")
-
-    def closeExam(self, discard=False):
-        if self._exam_controller.active:
-            raise ValueError("当前有正在进行的考试操作，请先等待完成或取消获取。")
-        if self._exam_current is None:
-            return True
-        if self._exam_dirty and not discard:
-            return "confirm"
-        self._exam_current = None
-        self._exam_raw = None
-        self._exam_form_meta = {}
-        self._exam_dirty = False
-        self._exam_course_title = ""
-        self._exam_input = {}
-        self._exam_notify("已返回考试安排列表。", "info")
-        return True
-
-    def requestExamSuggestions(self, scope="all", confirmed=False, replace_manual=False):
-        if self._exam_controller.active:
-            raise ValueError("已有考试操作正在进行，请稍候。")
-        if self._exam_current is None:
-            raise ValueError("请先打开试卷后再获取参考答案。")
-        rec = self._exam_current
-        if rec["state"] not in EDITABLE_STATES:
-            raise ValueError(f"当前答卷状态为「{state_text(rec['state'])}」，不能获取参考答案。")
-        self._require_exam_in_time()
-        scope_str = str(scope or "all").strip()
-        replace_flag = bool(replace_manual)
-        target_questions = []
-        for q in sorted(rec["questions"], key=lambda item: item.get("no", 0)):
-            if scope_str != "all" and q["id"] != scope_str:
-                continue
-            ans = rec["answers"].get(q["id"])
-            if ans and ans.get("source") == "manual" and not replace_flag:
-                continue
-            target_questions.append(q)
-        image_count = sum(
-            len(q.get("images") or []) + (1 if "<img" in q.get("title", "") and not q.get("images") else 0)
-            for q in target_questions
-        )
-        ai_summary, bank_summary = self._exam_effective_summaries()
-        if not confirmed:
-            return {
-                "scope": scope_str,
-                "questionCount": len(target_questions),
-                "imageCount": image_count,
-                "aiSummary": ai_summary,
-                "bankSummary": bank_summary,
-                "replaceManual": replace_flag,
-            }
-        if not target_questions:
-            self._exam_notify("没有需要查询参考答案的题目（手动填写的题目已跳过）。", "info")
-            return True
-        effective, _ = exam_answer_config(self.config)
-        self._exam_assist_state = dict(
-            completed=0,
-            total=len(target_questions),
-            saved_count=0,
-            auto_mode=False,
-            sync_to_platform=False,
-            auto_submit=False,
-            pending_auto_submit=False,
-            active_question_id="",
-            target_question_ids=[q["id"] for q in target_questions],
-            replace_manual=replace_flag,
-            ai_usage=dict(
-                requests=0,
-                limit=int(effective["ai"]["request_limit"]),
-                known=0,
-                unknown=0,
-                tokens=0,
-            ),
-        )
-        self._start_exam_worker("exam_assist", questions=target_questions)
-        self._exam_notify(f"正在获取 {len(target_questions)} 道题的参考答案…", "info")
-        return True
-
-    def startAutoExam(self, confirmed=False, sync_to_platform=True, auto_submit=False, replace_manual=False):
-        if self._exam_controller.active:
-            raise ValueError("已有考试操作正在进行，请稍候。")
-        if self._exam_current is None:
-            raise ValueError("请先打开试卷后再启动自动答题。")
-        rec = self._exam_current
-        if rec["state"] not in EDITABLE_STATES:
-            raise ValueError(f"当前答卷状态为「{state_text(rec['state'])}」，不能自动答题。")
-        self._require_exam_in_time()
-        replace_flag = bool(replace_manual)
-        sync_flag = bool(sync_to_platform)
-        submit_flag = bool(auto_submit)
-        target_questions = []
-        for q in sorted(rec["questions"], key=lambda item: item.get("no", 0)):
-            ans = rec["answers"].get(q["id"])
-            if ans and ans.get("source") == "manual" and not replace_flag:
-                continue
-            target_questions.append(q)
-        image_count = sum(
-            len(q.get("images") or []) + (1 if "<img" in q.get("title", "") and not q.get("images") else 0)
-            for q in target_questions
-        )
-        ai_summary, bank_summary = self._exam_effective_summaries()
-        can_save = bool(self._exam_form_meta) and not self.demo_mode
-        if not confirmed:
-            return {
-                "title": rec.get("title", ""),
-                "accountLabel": self._exam_account_label or self._exam_account_context()[2],
-                "questionCount": len(target_questions),
-                "totalCount": len(rec.get("questions") or []),
-                "imageCount": image_count,
-                "aiSummary": ai_summary,
-                "bankSummary": bank_summary,
-                "canSaveToPlatform": can_save,
-                "syncToPlatform": sync_flag,
-                "autoSubmit": submit_flag,
-                "replaceManual": replace_flag,
-            }
-        if not target_questions:
-            if submit_flag:
-                unanswered = answer_summary(rec)["unansweredNumbers"]
-                if not unanswered:
-                    return self.submitExam(rec["exam_id"], rec["attempt_id"])
-                self._exam_notify(
-                    f"没有需要自动作答的新题目，但仍有 {len(unanswered)} 题未作答（题号：{'、'.join(str(x) for x in unanswered[:10])}），已暂停自动交卷。",
-                    "warning",
-                )
-                return True
-            self._exam_notify("所有题目均已手动填写，无需自动答题。", "info")
-            return True
-        effective, _ = exam_answer_config(self.config)
-        self._exam_assist_state = dict(
-            completed=0,
-            total=len(target_questions),
-            saved_count=0,
-            auto_mode=True,
-            sync_to_platform=sync_flag,
-            auto_submit=submit_flag,
-            pending_auto_submit=False,
-            active_question_id=target_questions[0]["id"],
-            target_question_ids=[q["id"] for q in target_questions],
-            replace_manual=replace_flag,
-            ai_usage=dict(
-                requests=0,
-                limit=int(effective["ai"]["request_limit"]),
-                known=0,
-                unknown=0,
-                tokens=0,
-            ),
-        )
-        self._start_exam_worker(
-            "exam_auto",
-            exam_id=rec["exam_id"],
-            questions=target_questions,
-            sync_to_platform=sync_flag,
-            paper=rec,
-            form_meta=self._exam_form_meta,
-        )
-        mode_hint = "（逐题保存并跳到下一题" + ("，全部答完后自动交卷" if submit_flag else "，答完后由你决定是否交卷") + "）"
-        self._exam_notify(f"正在自动作答 {len(target_questions)} 道题{mode_hint}…", "info")
-        return True
-
-    def cancelExamTask(self):
-        if not self._exam_controller.active:
-            return False
-        if self._exam_operation == "exam_submit":
-            raise ValueError("交卷请求已发出，不能中途撤销；请等待结果或只读核验。")
-        self._exam_input = {}
-        self._exam_assist_state["pending_auto_submit"] = False
-        self._exam_controller.stop()
-        if self._exam_operation == "homework_assist":
-            self._homework_notify("正在停止获取参考答案，已填入的答案保留…", "warning")
-        elif self._exam_operation == "exam_auto":
-            self._exam_notify("正在停止自动答题，已选答案与已同步进度保留…", "warning")
-        else:
-            self._exam_notify("正在停止获取参考答案，已填入的答案保留…", "warning")
-        self.examChanged.emit()
-        return True
-
-    def replyExamInput(self, answer="", cancel=False):
-        if not self._exam_input or not self._exam_controller.active or self._exam_controller.stopping:
-            return False
-        self._exam_controller.reply(str(answer or ""), bool(cancel))
-        self._exam_input = {}
-        self.examChanged.emit()
-        self.homeworkChanged.emit()
-        return True
-
-    def copyExamServiceConfig(self, kind):
-        def run():
-            if self.busy or self._exam_controller.active:
-                raise ValueError("任务运行中锁定答题服务配置。")
-            if kind == "ai":
-                for k, v in self.config["ai"].items():
-                    self.config["exam_ai"][k] = v
-                self.settings_edited()
-                self.examChanged.emit()
-                self.notify("已将刷课 AI 服务配置复制到考试独立配置。", "success")
-            elif kind == "bank":
-                for k, v in self.config["question_bank"].items():
-                    self.config["exam_question_bank"][k] = v
-                self.exam_provider_order = list(self.provider_order)
-                self.settings_edited()
-                self.examProvidersChanged.emit()
-                self.examChanged.emit()
-                self.notify("已将刷课题库配置与顺序复制到考试独立配置。", "success")
-            else:
-                raise ValueError("未知的服务配置复制类型。")
-        return self.execute(run)
-
-    def on_exam_event(self, event):
-        if event.get("run_id", self._exam_controller.run_id) != self._exam_controller.run_id:
-            return
-        kind = event.get("type")
-        if kind == "session_ready":
-            # worker 登录后会刷新并写回 Cookie，需同步更新本轮考试／作业的 cookie_mtime_ns 快照
-            try:
-                snap = self._exam_identity_snapshot()
-            except OSError:
-                return
-            if (
-                self._exam_identity is not None
-                and len(snap) == 4
-                and snap[0] == "real"
-                and self._exam_identity[:3] == snap[:3]
-                and snap[1] == event.get("account_id")
-                and snap[2] == event.get("uid")
-                and snap[3] == event.get("cookie_mtime_ns")
-            ):
-                self._exam_identity = snap
-            return
-        try:
-            if self._exam_identity is not None and self._exam_identity_snapshot() != self._exam_identity:
-                return
-        except OSError:
-            return
-        if kind == "log":
-            self.append_log(event.get("message", ""), event.get("level", "INFO"))
-            return
-        if kind == "ai_usage":
-            if self._exam_operation == "homework_assist":
-                self._homework_assist_state["ai_usage"] = {
-                    k: event[k] for k in ("requests", "limit", "known", "unknown", "tokens")
-                }
-                self.homeworkChanged.emit()
-                return
-            self._exam_assist_state["ai_usage"] = {
-                k: event[k] for k in ("requests", "limit", "known", "unknown", "tokens")
-            }
-            self.examChanged.emit()
-            return
-        if kind == "input":
-            if self._exam_controller.stopping:
-                return
-            self._exam_input = {
-                "kind": event.get("kind", "choice"),
-                "message": plain_text(event.get("message", "")),
-                "choices": list(event.get("choices", [])),
-                "requestId": event.get("request_id", ""),
-            }
-            if self._exam_operation == "homework_assist":
-                self._homework_notify("等待确认是否向 AI 发送作业题目图片。", "warning")
-                return
-            self._exam_notify("等待确认是否向 AI 发送考试题目图片。", "warning")
-            return
-        if kind == "exam_list":
-            self._exam_outcome = True
-            self._exam_list = list(event.get("exams", []))
-            if event.get("demo") and not self.demo_mode:
-                self.demo_mode = True
-            self._exam_notify(f"已读取 {len(self._exam_list)} 场{'演示' if event.get('demo') else ''}考试安排。", "success")
-            return
-        if kind == "exam_unavailable":
-            self._exam_outcome = True
-            for entry in self._exam_list:
-                if (entry["examId"], entry["courseId"], entry["clazzId"]) == (
-                    event["exam_id"], event["course_id"], event["clazz_id"]
-                ):
-                    entry.update(nativeSupported=False, reason=self.redact(event["reason"]))
-                    break
-            self._exam_notify(event["reason"], "warning")
-            return
-        if kind == "exam_opened":
-            paper = dict(event["paper"])
-            server_now = event.get("server_now_utc", "")
-            if server_now:
-                from datetime import timezone
-                try:
-                    srv = datetime.fromisoformat(server_now)
-                    if srv.tzinfo is None:
-                        srv = srv.replace(tzinfo=timezone.utc)
-                    self._exam_clock_offset_sec = srv.timestamp() - datetime.now(timezone.utc).timestamp()
-                except ValueError:
-                    self._exam_clock_offset_sec = 0.0
-            acc_id, uid, acc_label = self._exam_account_context()
-            paper["account_id"] = acc_id
-            paper["uid"] = uid
-            self._exam_course_title = paper.get("course_title", self._exam_course_title)
-            self._exam_account_label = acc_label
-            key = exam_draft_key(
-                acc_id,
-                uid,
-                paper["course_id"],
-                paper["clazz_id"],
-                paper["exam_id"],
-                paper["attempt_id"],
-            )
-            store = self._exam_store()
-            try:
-                local_rec, local_raw = store.read(key)
-                merged, restored_unsynced = merge_platform_answers(
-                    local_rec, paper, event.get("platform_answers") or {}, server_now,
-                )
-                if local_rec is None or (merged != local_rec and merged["state"] in EDITABLE_STATES):
-                    merged, local_raw = store.save(merged, local_raw)
-            except (OSError, ValueError) as exc:
-                self._exam_outcome = True
-                self._exam_notify(str(exc), "danger")
-                return
-            self._exam_current = merged
-            self._exam_raw = local_raw
-            self._exam_dirty = False
-            self._exam_form_meta = dict(event.get("form_meta") or {})
-            self._exam_outcome = True
-            if restored_unsynced:
-                self._exam_notify("已恢复本机未同步草稿。", "warning")
-            elif local_rec is not None:
-                self._exam_notify(f"已恢复本机答卷（状态：{state_text(self._exam_current['state'])}）。", "info")
-            else:
-                self._exam_notify("试卷已加载，作答后可保存本机草稿。", "success")
-            return
-        if kind == "exam_suggestion":
-            if (self._exam_current is None or self._exam_current["state"] not in EDITABLE_STATES
-                    or self._exam_remaining_seconds(self._exam_current["deadline_utc"]) <= 0):
-                return
-            qid = event["question_id"]
-            src = event.get("source", "")
-            reason = self.redact(event.get("reason", ""))
-            save_reason = self.redact(event.get("save_reason", ""))
-            if save_reason and save_reason not in reason:
-                reason = f"{reason}（{save_reason}）" if reason else save_reason
-            ans_payload = dict(event.get("answer") or {}, reason=reason)
-            if src:
-                try:
-                    apply_suggestion(
-                        self._exam_current,
-                        qid,
-                        ans_payload,
-                        src,
-                        replace_manual=self._exam_assist_state.get("replace_manual", False),
-                    )
-                    self._exam_dirty = True
-                except ValueError:
-                    pass
-            else:
-                # 未命中时仅在不覆盖已有 manual 答案的前提下记录原因
-                cur_ans = self._exam_current["answers"].get(qid)
-                if not cur_ans or cur_ans.get("source") != "manual":
-                    entry = copy.deepcopy(cur_ans) if cur_ans else empty_answer()
-                    entry["reason"] = reason[:1000]
-                    self._exam_current["answers"][qid] = entry
-            if event.get("platform_saved"):
-                self._exam_assist_state["saved_count"] = int(self._exam_assist_state.get("saved_count", 0)) + 1
-            self._exam_assist_state["completed"] = min(
-                self._exam_assist_state["total"],
-                self._exam_assist_state["completed"] + 1,
-            )
-            if self._exam_assist_state.get("auto_mode"):
-                # 自动答题模式：逐题保存本机草稿并将界面焦点推进到下一题
-                try:
-                    updated, raw = self._exam_store().save(self._exam_current, self._exam_raw)
-                    self._exam_current = updated
-                    self._exam_raw = raw
-                    self._exam_dirty = False
-                except (OSError, ValueError):
-                    pass
-                target_ids = list(self._exam_assist_state.get("target_question_ids") or [])
-                if qid in target_ids:
-                    idx = target_ids.index(qid)
-                    self._exam_assist_state["active_question_id"] = (
-                        target_ids[idx + 1] if idx + 1 < len(target_ids) else qid
-                    )
-            self.examChanged.emit()
-            return
-        if kind == "exam_assist_done":
-            self._exam_outcome = True
-            self._exam_assist_state["completed"] = event["completed"]
-            self._exam_assist_state["total"] = event["total"]
-            if "saved_count" in event:
-                self._exam_assist_state["saved_count"] = int(event["saved_count"])
-            rolling_enc = event.get("rolling_enc") or []
-            if rolling_enc and len(rolling_enc) == 3 and all(rolling_enc) and isinstance(self._exam_form_meta, dict):
-                self._exam_form_meta["rolling_enc"] = list(rolling_enc)
-            if self._exam_current is not None and self._exam_dirty and self._exam_current["state"] in EDITABLE_STATES:
-                try:
-                    updated, raw = self._exam_store().save(self._exam_current, self._exam_raw)
-                    self._exam_current = updated
-                    self._exam_raw = raw
-                    self._exam_dirty = False
-                except (OSError, ValueError):
-                    pass
-            if self._exam_assist_state.get("auto_mode") and self._exam_assist_state.get("auto_submit"):
-                if (
-                    self._exam_current is not None
-                    and self._exam_current["state"] in EDITABLE_STATES
-                    and not self._exam_controller.stopping
-                    and self._exam_remaining_seconds(self._exam_current["deadline_utc"]) > 0
-                ):
-                    unanswered = answer_summary(self._exam_current)["unansweredNumbers"]
-                    if not unanswered:
-                        self._exam_assist_state["pending_auto_submit"] = True
-                        self._exam_notify(
-                            (event.get("message") or "自动答题完成。") + " 全部题目已作答，即将自动交卷并核验…",
-                            "info",
-                        )
-                        return
-                    unanswered_text = "、".join(str(x) for x in unanswered[:10])
-                    if len(unanswered) > 10:
-                        unanswered_text += " 等"
-                    self._exam_assist_state["pending_auto_submit"] = False
-                    self._exam_notify(
-                        f"自动答题完成，但尚有 {len(unanswered)} 题未命中答案（题号：{unanswered_text}），已暂停自动交卷，请补全后手动交卷。",
-                        "warning",
-                    )
-                    return
-            self._exam_notify(event.get("message") or "参考答案获取完成。", "success")
-            return
-        if kind == "exam_saved":
-            self._exam_outcome = True
-            if self._exam_current and self._exam_current["exam_id"] == event["exam_id"]:
-                if event["verified"] and self._exam_current["state"] == STATE_LOCAL_DRAFT and not self._exam_dirty:
-                    self._exam_current["prev_state"] = self._exam_current["state"]
-                    self._exam_current["state"] = STATE_PLATFORM_SAVED
-                    self._exam_current["reason"] = event.get("reason", "")
-                    self._exam_current, self._exam_raw = self._exam_store().save(self._exam_current, self._exam_raw)
-                    self._exam_notify("平台已保存并核对一致。", "success")
-                else:
-                    self._exam_notify(event.get("reason") or "平台保存未确认，已保留本机草稿。", "warning")
-            return
-        if kind == "exam_submitted":
-            self._exam_outcome = True
-            acc_id, uid, _ = self._exam_account_context()
-            exam_id_str = event["exam_id"]
-            attempt_id_str = event["attempt_id"]
-            course_id = ""
-            clazz_id = ""
-            if self._exam_current and self._exam_current["exam_id"] == exam_id_str:
-                course_id = self._exam_current["course_id"]
-                clazz_id = self._exam_current["clazz_id"]
-            else:
-                entry = next((item for item in self._exam_list if item.get("examId") == exam_id_str), None)
-                if entry:
-                    course_id = str(entry.get("courseId", ""))
-                    clazz_id = str(entry.get("clazzId", ""))
-            if all((acc_id, uid, course_id, clazz_id, exam_id_str, attempt_id_str)):
-                key = exam_draft_key(acc_id, uid, course_id, clazz_id, exam_id_str, attempt_id_str)
-                state = event["state"]
-                reason = self.redact(event.get("reason", ""))
-                store = self._exam_store()
-                if self._exam_operation == "exam_verify":
-                    settled, raw = store.settle_verify(key, state == "submitted", reason)
-                else:
-                    outcome_map = {
-                        "submitted": "submitted",
-                        "simulated_submitted": "simulated_submitted",
-                        "rejected": "rejected",
-                        "submit_unknown": "unknown",
-                    }
-                    settled, raw = store.settle_submit(key, outcome_map.get(state, "unknown"), reason)
-                if self._exam_current and self._exam_current["exam_id"] == exam_id_str:
-                    self._exam_current = settled
-                    self._exam_raw = raw
-                    self._exam_dirty = False
-                tone = "success" if settled["state"] in FINISHED_STATES else "danger" if settled["state"] == STATE_REJECTED else "warning"
-                self._exam_notify(settled.get("reason") or state_text(settled["state"]), tone)
-            return
-        if kind == "homework_list":
-            self._exam_outcome = True
-            self._homework_list = list(event.get("homeworks", []))
-            if event.get("demo") and not self.demo_mode:
-                self.demo_mode = True
-            self._homework_notify(
-                f"已读取 {len(self._homework_list)} 份{'演示' if event.get('demo') else ''}作业。",
-                "success",
-            )
-            return
-        if kind == "homework_loaded":
-            hw = dict(event["homework"])
-            acc_id, _, _ = self._exam_account_context()
-            did = homework_draft_id(acc_id, hw.get("course_id", ""), hw.get("work_id", ""), hw.get("url", ""))
-            plat_answers = event.get("platform_answers") or {}
-            rec = {
-                "draft_id": did,
-                "account_id": acc_id,
-                "course_id": hw.get("course_id", ""),
-                "clazz_id": hw.get("clazz_id", ""),
-                "work_id": hw.get("work_id", ""),
-                "title": hw.get("title", "独立作业草稿"),
-                "demo": bool(event.get("demo", False)),
-                "version": 0,
-                "updated_at": "",
-                "questions": hw.get("questions") or [],
-                "answers": {
-                    qid: dict(ans)
-                    for qid, ans in plat_answers.items()
-                    if isinstance(ans, dict)
-                },
-            }
-            try:
-                saved = self._homework_store().save_draft(rec, merge_existing_manual=True)
-            except (OSError, ValueError) as exc:
-                self._exam_outcome = True
-                self._homework_notify(str(exc), "danger")
-                return
-            self._homework_current = saved
-            self._homework_form_meta = dict(event.get("form_meta") or {})
-            self._exam_outcome = True
-            self._homework_dirty = False
-            self._homework_notify("已读取作业并保存到本机草稿（未提交）。", "success")
-            return
-        if kind == "homework_saved":
-            self._exam_outcome = True
-            tone = "success" if event.get("verified") else "warning"
-            self._homework_notify(event.get("reason") or "作业暂存完成。", tone)
-            return
-        if kind == "homework_suggestion":
-            if self._homework_current is None:
-                return
-            qid = event["question_id"]
-            src = event.get("source", "")
-            reason = self.redact(event.get("reason", ""))
-            ans_payload = dict(event.get("answer") or {}, reason=reason)
-            if src:
-                try:
-                    apply_homework_suggestion(
-                        self._homework_current,
-                        qid,
-                        ans_payload,
-                        src,
-                        replace_manual=self._homework_assist_state.get("replace_manual", False),
-                    )
-                    self._homework_dirty = True
-                except ValueError:
-                    pass
-            else:
-                cur_ans = self._homework_current["answers"].get(qid)
-                if not cur_ans or cur_ans.get("source") != "manual":
-                    entry = dict(cur_ans) if cur_ans else {"option_ids": [], "text": "", "blanks": [], "source": "", "updated_at": ""}
-                    entry["reason"] = reason[:1000]
-                    self._homework_current["answers"][qid] = entry
-            self._homework_assist_state["completed"] = min(
-                self._homework_assist_state["total"],
-                self._homework_assist_state["completed"] + 1,
-            )
-            self.homeworkChanged.emit()
-            return
-        if kind == "homework_assist_done":
-            self._exam_outcome = True
-            self._homework_assist_state["completed"] = event["completed"]
-            self._homework_assist_state["total"] = event["total"]
-            self._homework_notify(event.get("message") or "参考答案获取完成（仅写入本机草稿）。", "success")
-            return
-        if kind in ("error", "cancelled"):
-            self._exam_outcome = True
-            msg = event.get("message", "考试后台操作已停止。")
-            if self._exam_operation == "exam_submit":
-                self.__settle_unfinished_submit(msg)
-            elif self._exam_operation.startswith("homework_"):
-                self._homework_notify(msg, "warning" if kind == "cancelled" else "danger")
-            else:
-                self._exam_notify(msg, "warning" if kind == "cancelled" else "danger")
-            return
-
-    def __settle_unfinished_submit(self, reason=""):
-        if self._exam_current and self._exam_current["state"] == STATE_SUBMIT_UNKNOWN:
-            rec = self._exam_current
-            key = exam_draft_key(
-                rec["account_id"],
-                rec["uid"],
-                rec["course_id"],
-                rec["clazz_id"],
-                rec["exam_id"],
-                rec["attempt_id"],
-            )
-            msg = reason or "提交结果待核验，请点击核验或到官方入口确认。"
-            try:
-                settled, raw = self._exam_store().settle_submit(key, "unknown", self.redact(msg))
-                self._exam_current = settled
-                self._exam_raw = raw
-            except ValueError:
-                pass
-        self._exam_notify("提交结果待核验，请点击核验或到官方入口确认。", "warning")
-
-    def on_exam_finished(self, code):
-        self._exam_input = {}
-        op = self._exam_operation
-        outcome = self._exam_outcome
-        pending_auto_submit = bool(self._exam_assist_state.get("pending_auto_submit", False))
-        self._exam_assist_state["pending_auto_submit"] = False
-        self._exam_operation = ""
-        self._exam_outcome = False
-        if op == "exam_submit" and not outcome:
-            self.__settle_unfinished_submit()
-        elif not outcome:
-            if code != 0:
-                if op.startswith("homework_"):
-                    if self._exam_controller.stopping:
-                        self._homework_notify("已取消当前参考答案获取，已填入的本机答案保留。", "warning")
-                    else:
-                        self._homework_notify(f"作业后台异常退出（{code}），请重试或检查日志。", "danger")
-                elif self._exam_controller.stopping:
-                    self._exam_notify("已取消当前考试操作，已填入的本机答案保留。", "warning")
-                else:
-                    self._exam_notify(f"考试后台异常退出（{code}），请重试或检查日志。", "danger")
-            elif op.startswith("homework_"):
-                self._homework_notify("作业后台已结束，但未收到有效结果，请重试。", "warning")
-            elif op.startswith("exam_"):
-                self._exam_notify("考试后台已结束，但未收到有效结果，请重试。", "warning")
-        elif op == "exam_auto" and pending_auto_submit and code == 0 and self._exam_current is not None:
-            rec = self._exam_current
-            if rec["state"] in EDITABLE_STATES and self._exam_remaining_seconds(rec["deadline_utc"]) > 0:
-                self.submitExam(rec["exam_id"], rec["attempt_id"])
-                return
-        self.examChanged.emit()
-        self.homeworkChanged.emit()
-
-    # ---------- 独立作业（仅本机草稿） ----------
-
-    def _homework_notify(self, message, tone="info"):
-        self._homework_feedback = {"message": self.redact(message), "tone": tone}
-        self.homeworkChanged.emit()
-
-    def _homework_store(self) -> HomeworkDraftStore:
-        acc_id, _, _ = self._exam_account_context()
-        return HomeworkDraftStore(data_dir(), acc_id or "offline-demo")
-
-    @property
-    def homework(self):
-        try:
-            drafts = self._homework_store().list_drafts()
-        except (OSError, ValueError) as exc:
-            drafts = []
-            self._homework_feedback = {"message": self.redact(str(exc)), "tone": "danger"}
-        current_payload = {}
-        if self._homework_current is not None:
-            rec = self._homework_current
-            summary = homework_summary(rec)
-            answers = rec.get("answers") or {}
-            q_rows = []
-            for q in sorted(rec.get("questions") or [], key=lambda item: item.get("no", 0)):
-                qid = q["id"]
-                ans = answers.get(qid) or {"option_ids": [], "text": "", "blanks": [], "source": "", "updated_at": ""}
-                src = ans.get("source", "")
-                q_rows.append(
-                    {
-                        "id": qid,
-                        "no": q["no"],
-                        "type": q["type"],
-                        "typeName": q.get("type_name", q["type"]),
-                        "title": q["title"],
-                        "options": list(q.get("options") or []),
-                        "blankCount": int(q.get("blank_count") or 0),
-                        "images": list(q.get("images") or []),
-                        "supported": bool(q.get("supported", True) and q["type"] != "unsupported"),
-                        "unsupportedReason": q.get("reason", ""),
-                        "answer": {
-                            "option_ids": list(ans.get("option_ids") or []),
-                            "text": str(ans.get("text") or ""),
-                            "blanks": list(ans.get("blanks") or []),
-                        },
-                        "source": src,
-                        "sourceText": source_text(src),
-                        "reason": str(ans.get("reason") or ""),
-                    }
-                )
-            _, _, acc_label = self._exam_account_context()
-            current_payload = {
-                "draftId": rec["draft_id"],
-                "title": rec["title"],
-                "accountLabel": acc_label,
-                "dirty": self._homework_dirty,
-                "canSaveToPlatform": bool(self._homework_form_meta) and not self.demo_mode,
-                "updatedAt": rec.get("updated_at", ""),
-                "answeredCount": summary["answeredCount"],
-                "totalCount": summary["totalCount"],
-                "supportedCount": summary["supportedCount"],
-                "unansweredNumbers": summary["unansweredNumbers"],
-                "questions": q_rows,
-            }
-        ai_summary, bank_summary = self._exam_effective_summaries()
-        assist_usage = self._homework_assist_state["ai_usage"]
-        return {
-            "list": list(self._homework_list),
-            "drafts": drafts,
-            "current": current_payload,
-            "assist": {
-                "enabled": self.config["exam"].get("assist_enabled", "false") == "true",
-                "running": self._exam_controller.active and self._exam_operation == "homework_assist",
-                "aiSummary": ai_summary,
-                "bankSummary": bank_summary,
-                "completed": self._homework_assist_state["completed"],
-                "total": self._homework_assist_state["total"],
-                "aiUsage": {
-                    "requests": assist_usage["requests"],
-                    "limit": assist_usage["limit"],
-                    "tokens": assist_usage["tokens"],
-                },
-            },
-            "input": dict(self._exam_input) if self._exam_operation == "homework_assist" else {},
-            "busy": self._exam_controller.active,
-            "operation": self._exam_operation if self._exam_controller.active else "",
-            "feedback": dict(self._homework_feedback),
-        }
-
-    def loadHomeworks(self, course_keys=""):
-        def run():
-            if self._exam_controller.active:
-                raise ValueError("正在执行考试或作业后台操作，请稍候。")
-            target_courses = self._resolve_exam_courses(course_keys)
-            extra = {"courses": target_courses} if target_courses else {}
-            self._start_exam_worker("homework_list", **extra)
-            if len(target_courses) == 1:
-                scope = f"「{target_courses[0].get('title', '')}」"
-            elif target_courses:
-                scope = f"所选 {len(target_courses)} 门课程"
-            else:
-                scope = "全部课程"
-            self._homework_notify(f"正在读取{scope}的作业列表…", "info")
-        return self._execute_homework(run)
-
-    def loadHomework(self, url=""):
-        def run():
-            if self._exam_controller.active:
-                raise ValueError("正在执行考试或作业后台操作，请稍候。")
-            if self._homework_current is not None and self._homework_dirty:
-                raise ValueError("当前作业草稿有未保存修改，请先保存或关闭后再读取新作业。")
-            if not self.demo_mode:
-                self._ensure_vendor_path()
-                from api.homework import validate_homework_url
-                clean_url = validate_homework_url(str(url or "").strip())
-            else:
-                clean_url = ""
-            self._start_exam_worker("homework_load", url=clean_url)
-            self._homework_notify("正在读取独立作业（仅保存本机草稿，不向平台提交）…", "info")
-        return self._execute_homework(run)
-
-    def openHomeworkDraft(self, draft_id):
-        def run():
-            if self._exam_controller.active:
-                raise ValueError("正在执行考试或作业后台操作，请稍候。")
-            if self._homework_dirty:
-                raise ValueError("当前作业草稿有未保存修改，请先保存或关闭后再切换。")
-            rec, _ = self._homework_store().get_draft(str(draft_id or "").strip())
-            if rec is None:
-                raise ValueError("未找到对应的本机作业草稿。")
-            self._homework_current = rec
-            self._homework_form_meta = {}
-            self._homework_dirty = False
-            message = f"已打开本机作业草稿「{rec['title']}」。"
-            if not self.demo_mode:
-                message += "如需暂存到平台，请返回列表并重新读取作业链接。"
-            self._homework_notify(message, "info")
-        return self._execute_homework(run)
-
-    def setHomeworkAnswer(self, question_id, answer):
-        def run():
-            if self._homework_current is None:
-                raise ValueError("当前未打开任何作业草稿。")
-            if self._exam_controller.active and self._exam_operation == "homework_assist":
-                raise ValueError("正在获取参考答案，请稍候。")
-            apply_homework_manual_answer(
-                self._homework_current,
-                str(question_id),
-                answer if isinstance(answer, dict) else {},
-            )
-            self._homework_dirty = True
-            self._homework_notify("已记录手动修改（尚未保存到本机草稿）。", "info")
-        return self._execute_homework(run)
-
-    def saveHomeworkDraft(self, to_platform=False):
-        def run():
-            if self._homework_current is None:
-                raise ValueError("当前未打开任何作业草稿。")
-            if to_platform and not self.demo_mode and not self._homework_form_meta:
-                raise ValueError("缺少平台暂存上下文，请返回列表并重新读取作业链接。")
-            saved = self._homework_store().save_draft(self._homework_current)
-            self._homework_current = saved
-            self._homework_dirty = False
-            if to_platform and not self.demo_mode:
-                self._start_exam_worker(
-                    "homework_save",
-                    homework=saved,
-                    form_meta=self._homework_form_meta,
-                    answers=saved["answers"],
-                )
-                self._homework_notify("本机草稿已保存，正在暂存到平台（不提交）…", "info")
-            else:
-                self._homework_notify("作业草稿已保存到本机（未向平台提交）。", "success")
-        return self._execute_homework(run)
-
-    def requestHomeworkSuggestions(self, scope="all", confirmed=False, replace_manual=False):
-        if self._exam_controller.active:
-            raise ValueError("已有考试或作业后台操作正在进行，请稍候。")
-        if self._homework_current is None:
-            raise ValueError("请先读取或打开一份作业草稿。")
-        rec = self._homework_current
-        scope_str = str(scope or "all").strip()
-        replace_flag = bool(replace_manual)
-        target_questions = []
-        for q in sorted(rec["questions"], key=lambda item: item.get("no", 0)):
-            if not q.get("supported", True) or q.get("type") == "unsupported":
-                continue
-            qid = q["id"]
-            if scope_str != "all" and qid != scope_str:
-                continue
-            existing = rec["answers"].get(qid)
-            if scope_str == "all" and existing and existing.get("source") == "manual" and not replace_flag:
-                continue
-            target_questions.append(dict(q))
-        if not target_questions:
-            raise ValueError("没有需要获取参考答案的支持题型（已手动修改的题默认保留）。")
-        ai_summary, bank_summary = self._exam_effective_summaries()
-        image_count = sum(max(1, len(q.get("images") or [])) for q in target_questions if q.get("images"))
-        if not confirmed:
-            need_replace_confirm = False
-            if scope_str != "all":
-                existing = rec["answers"].get(scope_str)
-                need_replace_confirm = bool(existing and existing.get("source") == "manual")
-            return {
-                "questionCount": len(target_questions),
-                "imageCount": image_count,
-                "aiSummary": ai_summary,
-                "bankSummary": bank_summary,
-                "replaceManualConfirm": need_replace_confirm,
-            }
-        self._homework_assist_state = dict(
-            completed=0,
-            total=len(target_questions),
-            replace_manual=replace_flag or (scope_str != "all"),
-            ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
-        )
-        self._start_exam_worker("homework_assist", questions=target_questions, exam_id=rec["draft_id"])
-        self._homework_notify(f"正在为 {len(target_questions)} 道作业题获取参考答案…", "info")
-        return True
-
-    def exportHomeworkDraft(self):
-        if self._homework_current is None:
-            raise ValueError("请先打开一份作业草稿再导出。")
-        return export_homework_text(self._homework_current)
-
-    def deleteHomeworkDraft(self, draft_id):
-        def run():
-            did = str(draft_id or "").strip()
-            if self._homework_current and self._homework_current.get("draft_id") == did:
-                if self._homework_dirty:
-                    raise ValueError("请先关闭或保存当前正在编辑的作业草稿。")
-                self._homework_current = None
-                self._homework_form_meta = {}
-                self._homework_dirty = False
-            if not self._homework_store().delete_draft(did):
-                raise ValueError("未找到要删除的作业草稿。")
-            self._homework_notify("已删除指定的本机作业草稿。", "info")
-        return self._execute_homework(run)
-
-    def closeHomework(self, discard=False):
-        if self._exam_controller.active:
-            raise ValueError("当前有正在进行的后台操作，请先等待完成或取消。")
-        if self._homework_current is None:
-            return True
-        if self._homework_dirty and not discard:
-            return "confirm"
-        self._homework_current = None
-        self._homework_form_meta = {}
-        self._homework_dirty = False
-        self._homework_notify("已返回独立作业草稿列表。", "info")
-        return True
