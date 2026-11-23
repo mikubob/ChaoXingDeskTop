@@ -295,7 +295,9 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
             platform_answers={},
         )
         return
-    if action == "exam_assist":
+    if action in ("exam_assist", "exam_auto"):
+        is_auto = action == "exam_auto"
+        sync_to_platform = bool(command.get("sync_to_platform", False)) and is_auto
         config = command.get("config") or {}
         ai_cfg = config.get("ai") or {}
         bank_cfg = config.get("question_bank") or {}
@@ -330,17 +332,26 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                 )
                 allow_images = choice == "allow-images"
         resolved = 0
+        saved_count = 0
         ai_requests = 0
         limit = int(ai_cfg.get("request_limit") or 0)
         for q in questions:
             checkpoint(channel)
+            if is_auto:
+                controlled_wait(channel, 0.08)
             if not isinstance(q, dict):
                 continue
             qid = str(q.get("id", ""))
             qtype = str(q.get("type", ""))
             has_img = bool(q.get("images") or "<img" in str(q.get("title", "")))
+            platform_saved = False
+            save_reason = ""
             if qid == "101" or (qtype == "single" and not has_img):
                 opt_id = "A" if any(o.get("id") == "A" for o in q.get("options", [])) else (q["options"][0]["id"] if q.get("options") else "A")
+                if sync_to_platform:
+                    platform_saved = True
+                    saved_count += 1
+                    save_reason = "演示模式已模拟提交本题并跳到下一题。"
                 channel.send(
                     suggestion_event,
                     question_id=qid,
@@ -348,10 +359,16 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                     source=bank_source,
                     reason="演示题库命中，选项核验通过。",
                     attempts=[{"provider": bank_provider, "status": "hit", "reason": "演示题库命中"}],
+                    platform_saved=platform_saved,
+                    save_reason=save_reason,
                 )
                 resolved += 1
             elif qid == "102" or qtype == "multiple":
                 opts = [o["id"] for o in q.get("options", []) if o.get("id") in ("A", "B", "D")] or [o["id"] for o in q.get("options", [])[:2]]
+                if sync_to_platform:
+                    platform_saved = True
+                    saved_count += 1
+                    save_reason = "演示模式已模拟提交本题并跳到下一题。"
                 channel.send(
                     suggestion_event,
                     question_id=qid,
@@ -359,9 +376,15 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                     source=bank_source,
                     reason="演示题库命中多选选项。",
                     attempts=[{"provider": bank_provider, "status": "hit", "reason": "演示题库命中"}],
+                    platform_saved=platform_saved,
+                    save_reason=save_reason,
                 )
                 resolved += 1
             elif qid == "103" or qtype == "judgement":
+                if sync_to_platform:
+                    platform_saved = True
+                    saved_count += 1
+                    save_reason = "演示模式已模拟提交本题并跳到下一题。"
                 channel.send(
                     suggestion_event,
                     question_id=qid,
@@ -369,6 +392,8 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                     source=bank_source,
                     reason="演示题库判断核验通过。",
                     attempts=[{"provider": bank_provider, "status": "hit", "reason": "演示题库命中"}],
+                    platform_saved=platform_saved,
+                    save_reason=save_reason,
                 )
                 resolved += 1
             elif qid == "104" or qtype == "completion":
@@ -376,6 +401,10 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                 blanks = ["80", "443"][:blank_count] + ["演示答案"] * max(0, blank_count - 2)
                 ai_requests += 1
                 channel.send("ai_usage", requests=ai_requests, limit=limit, known=ai_requests, unknown=0, tokens=ai_requests * 60)
+                if sync_to_platform:
+                    platform_saved = True
+                    saved_count += 1
+                    save_reason = "演示模式已模拟提交本题并跳到下一题。"
                 channel.send(
                     suggestion_event,
                     question_id=qid,
@@ -383,6 +412,8 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                     source="ai",
                     reason="演示 AI 生成逐空参考答案，请核对。",
                     attempts=[{"provider": "AI", "status": "hit", "reason": "演示 AI 生成参考答案"}],
+                    platform_saved=platform_saved,
+                    save_reason=save_reason,
                 )
                 resolved += 1
             elif qid == "105" or has_img:
@@ -395,11 +426,17 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                         source="",
                         reason=reason,
                         attempts=[{"provider": "AI", "status": "skipped", "reason": reason}],
+                        platform_saved=False,
+                        save_reason="",
                     )
                 else:
                     opt_id = "B" if any(o.get("id") == "B" for o in q.get("options", [])) else (q["options"][0]["id"] if q.get("options") else "B")
                     ai_requests += 1
                     channel.send("ai_usage", requests=ai_requests, limit=limit, known=ai_requests, unknown=0, tokens=ai_requests * 60)
+                    if sync_to_platform:
+                        platform_saved = True
+                        saved_count += 1
+                        save_reason = "演示模式已模拟提交本题并跳到下一题。"
                     channel.send(
                         suggestion_event,
                         question_id=qid,
@@ -407,9 +444,15 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                         source="ai",
                         reason="演示 AI 视觉识图返回参考答案，请核对。",
                         attempts=[{"provider": "AI", "status": "hit", "reason": "演示 AI 视觉识图命中"}],
+                        platform_saved=platform_saved,
+                        save_reason=save_reason,
                     )
                     resolved += 1
             else:
+                if sync_to_platform:
+                    platform_saved = True
+                    saved_count += 1
+                    save_reason = "演示模式已模拟提交本题并跳到下一题。"
                 channel.send(
                     suggestion_event,
                     question_id=qid,
@@ -417,14 +460,24 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
                     source="ai",
                     reason="演示 AI 生成简答参考。",
                     attempts=[{"provider": "AI", "status": "hit", "reason": "演示 AI 生成参考答案"}],
+                    platform_saved=platform_saved,
+                    save_reason=save_reason,
                 )
                 resolved += 1
+        done_msg = (
+            f"自动答题完成：共处理 {len(questions)} 题，已作答 {resolved} 题"
+            + (f"，已模拟保存 {saved_count} 题" if sync_to_platform else "")
+            + "。"
+            if is_auto
+            else f"参考答案查询完成：共处理 {len(questions)} 题，生成 {resolved} 题参考答案。"
+        )
         channel.send(
             done_event,
             completed=len(questions),
             total=len(questions),
             resolved=resolved,
-            message=f"参考答案查询完成：共处理 {len(questions)} 题，生成 {resolved} 题参考答案。",
+            saved_count=saved_count,
+            message=done_msg,
         )
         return
     if action == "exam_submit":
@@ -869,10 +922,14 @@ def _exam_image_src(uri: str, cache_dir: Path | None) -> str:
     return ""
 
 
-def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", done_event="exam_assist_done"):
-    """使用 Exam 生效配置（题库 + AI）为指定考试或作业题目生成参考答案。"""
-    from .answers import build_answers
+def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", done_event="exam_assist_done", session=None):
+    """使用 Exam 生效配置（题库 + AI）为指定考试或作业题目生成参考答案；在自动答题模式下逐题查题并可选同步到平台。"""
+    from .answers import AIClient, AIError, build_answers
 
+    is_auto = command.get("action") == "exam_auto"
+    sync_to_platform = bool(command.get("sync_to_platform", False)) and is_auto and session is not None
+    paper = command.get("paper") or {}
+    form_meta = command.get("form_meta") or {}
     raw_questions = command.get("questions") or []
     if not isinstance(raw_questions, list):
         raise ValueError("待查询题目列表无效。")
@@ -907,10 +964,29 @@ def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", do
             rq["completion_parts"] = int(q.get("blank_count") or 1)
         router_questions.append(rq)
 
-    results = router.query_all(router_questions, query_delay=0)
+    # 逐题查询前统一完成一次含图题确认，避免逐题执行时每道图题重复弹窗
+    if len(router_questions) > 1 and isinstance(router.ai, AIClient) and not router.ai_unavailable:
+        policy = str(router.config["ai"].get("image_confirm_policy", "ask")).strip().lower()
+        img_q_count = sum(1 for rq in router_questions if "<img" in rq.get("title", ""))
+        img_total = sum(rq.get("title", "").count("<img") for rq in router_questions)
+        if policy == "ask" and img_q_count > 0:
+            try:
+                consent = router.ai.confirm_images(assist_channel, img_q_count, img_total)
+            except (AIError, ValueError):
+                consent = False
+            router.config["ai"]["image_confirm_policy"] = "always_allow" if consent else "always_skip"
+
+    adapter = None
+    rolling_enc = list(form_meta.get("rolling_enc") or [])
+    if sync_to_platform and form_meta:
+        from api.exam import ExamAdapter
+        adapter = ExamAdapter()
+
     resolved = 0
-    for q, rq, raw_ans in zip(questions, router_questions, results):
+    saved_count = 0
+    for q, rq in zip(questions, router_questions):
         checkpoint(channel)
+        raw_ans = router.query_all([rq], query_delay=0)[0]
         qid = str(q.get("id") or "")
         qtype = str(q.get("type") or "")
         meta = assist_channel.results.get(qid) or {}
@@ -939,7 +1015,7 @@ def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", do
             if any((answer_obj["option_ids"], answer_obj["text"].strip(), any(b.strip() for b in answer_obj["blanks"]))):
                 resolved += 1
                 if not reason:
-                    reason = "已生成参考答案，请核对。"
+                    reason = "已自动填入答案，请核对。" if is_auto else "已生成参考答案，请核对。"
             else:
                 src = ""
                 if not reason:
@@ -949,6 +1025,24 @@ def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", do
             if not reason:
                 reason = "题库与 AI 均未命中可用参考答案。"
 
+        platform_saved = False
+        save_reason = ""
+        if src and adapter is not None and paper:
+            save_res = adapter.save_question_once(
+                session.cookies,
+                paper,
+                form_meta,
+                q,
+                {qid: answer_obj},
+                rolling_enc=rolling_enc or None,
+            )
+            platform_saved = bool(save_res.get("saved"))
+            save_reason = str(save_res.get("reason") or "")[:500]
+            if save_res.get("rolling_enc"):
+                rolling_enc = list(save_res["rolling_enc"])
+            if platform_saved:
+                saved_count += 1
+
         channel.send(
             suggestion_event,
             question_id=qid,
@@ -956,14 +1050,25 @@ def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", do
             source=src,
             reason=reason,
             attempts=attempts,
+            platform_saved=platform_saved,
+            save_reason=save_reason,
         )
 
+    done_msg = (
+        f"自动答题完成：共处理 {len(questions)} 题，已作答 {resolved} 题"
+        + (f"，已同步平台 {saved_count} 题" if sync_to_platform else "")
+        + "。"
+        if is_auto
+        else f"参考答案查询完成：共处理 {len(questions)} 题，生成 {resolved} 题参考答案。"
+    )
     channel.send(
         done_event,
         completed=len(questions),
         total=len(questions),
         resolved=resolved,
-        message=f"参考答案查询完成：共处理 {len(questions)} 题，生成 {resolved} 题参考答案。",
+        saved_count=saved_count,
+        rolling_enc=rolling_enc[:3],
+        message=done_msg,
     )
 
 
@@ -973,6 +1078,9 @@ def real_exam_action(channel, command, cx, session):
 
     action = command["action"]
     adapter = ExamAdapter()
+    if action == "exam_auto":
+        real_exam_assist(channel, command, session=session)
+        return
     if action == "exam_list":
         selected = command.get("courses")
         if isinstance(selected, list) and selected:
@@ -1119,6 +1227,9 @@ def real(channel, command):
     if command.get("action") == "exam_assist":
         real_exam_assist(channel, command)
         return
+    if command.get("action") == "exam_auto" and not (command.get("sync_to_platform") and command.get("form_meta")):
+        real_exam_assist(channel, command)
+        return
     if command.get("action") == "homework_assist":
         real_exam_assist(channel, command, suggestion_event="homework_suggestion", done_event="homework_assist_done")
         return
@@ -1155,7 +1266,7 @@ def real(channel, command):
         raise ValueError('只读核验仅使用已读取课程的 Cookie 会话，请先重新读课。')
     if verifying:
         channel.send('verification_progress', phase='session', message='正在校验账号会话…', completed=0, total=0, reads=0, failures=0, elapsed_ms=0)
-    exam_actions = ('exam_list', 'exam_open', 'exam_save', 'exam_submit', 'exam_verify', 'homework_list', 'homework_load', 'homework_save')
+    exam_actions = ('exam_list', 'exam_open', 'exam_save', 'exam_submit', 'exam_verify', 'exam_auto', 'homework_list', 'homework_load', 'homework_save')
     cx = core.create_client(command["config"], channel,
                             courses_only=command["action"] in ('courses', 'verify', 'course_progress') + exam_actions)
     checkpoint(channel)

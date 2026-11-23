@@ -110,7 +110,8 @@ class ExamProtocolTests(unittest.TestCase):
         self.assertEqual(by_id["400001"]["status"], "ready")
         self.assertEqual(by_id["400001"]["limitMinutes"], 60)
 
-        self.assertFalse(by_id["400002"]["nativeSupported"])
+        self.assertTrue(by_id["400002"]["nativeSupported"])
+        self.assertEqual(by_id["400002"]["status"], "ready")
         self.assertIn("任务点", by_id["400002"]["reason"])
 
         self.assertFalse(by_id["400003"]["nativeSupported"])
@@ -318,6 +319,169 @@ class ExamProtocolTests(unittest.TestCase):
                 state="submitted",
                 reason="已收卷",
             )
+
+    def test_save_question_once_and_submit_with_rolling_enc(self) -> None:
+        all_html = _read_fixture("exam_paper_all_types.html")
+        parsed = self.adapter.parse_exam_page_html(all_html)
+        paper = parsed["paper"]
+        form_meta = parsed["form_meta"]
+        q0 = paper["questions"][0]
+        answers = {q0["id"]: {"option_ids": ["A"], "text": "", "blanks": []}}
+
+        with patch("api.exam.requests.Session") as mock_sess_cls:
+            post_sess = MagicMock()
+            mock_sess_cls.return_value = post_sess
+            post_sess.post.return_value = _mock_response(json_data={"status": "success", "data": "t1|r1|enc1"})
+            res = self.adapter.save_question_once({"UID": "1"}, paper, form_meta, q0, answers)
+            self.assertTrue(res["saved"])
+            self.assertEqual(res["rolling_enc"], ["t1", "r1", "enc1"])
+            self.assertEqual(post_sess.post.call_args.kwargs["params"]["tempSave"], "true")
+
+        form_meta["rolling_enc"] = ["t1", "r1", "enc1"]
+        with patch("api.exam.requests.Session") as mock_sess_cls:
+            post_sess, get_sess = MagicMock(), MagicMock()
+            mock_sess_cls.side_effect = [post_sess, get_sess]
+            post_sess.post.return_value = _mock_response(json_data={"status": "submitted"})
+            get_sess.get.return_value = _mock_response(_read_fixture("exam_look_submitted.html"))
+            res_sub = self.adapter.submit_once({"UID": "1"}, paper, form_meta, answers)
+            self.assertEqual(res_sub["state"], "submitted")
+            sent_data = post_sess.post.call_args.kwargs["data"]
+            self.assertEqual(sent_data["encLastUpdateTime"], "t1")
+            self.assertEqual(sent_data["encRemainTime"], "r1")
+            self.assertEqual(sent_data["enc"], "enc1")
+
+    def test_load_homework_ensures_vendor_path_and_local_error_feedback(self) -> None:
+        import os
+        import tempfile
+        from chaoxing_desktop.workbench_backend import WorkbenchBackend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"CHAOXING_DATA_DIR": tmp}):
+                backend = WorkbenchBackend(lambda *_a, **_kw: None)
+                backend.demo_mode = False
+                # 模拟主进程未预先把 vendor/chaoxing 加入 sys.path 的场景
+                vendor_str = str(VENDOR_DIR.resolve())
+                removed = [p for p in sys.path if Path(p).resolve() == VENDOR_DIR.resolve()]
+                for p in removed:
+                    sys.path.remove(p)
+                try:
+                    ok = backend.loadHomework("http://invalid.example.com/bad")
+                    self.assertFalse(ok)
+                    self.assertEqual(backend._homework_feedback["tone"], "danger")
+                    self.assertIn("HTTPS", backend._homework_feedback["message"])
+                    self.assertIn(vendor_str, [str(Path(p).resolve()) for p in sys.path])
+                finally:
+                    if vendor_str not in sys.path:
+                        sys.path.insert(0, vendor_str)
+
+    def test_auto_exam_state_and_optional_auto_submit(self) -> None:
+        import os
+        import tempfile
+        from chaoxing_desktop.workbench_backend import WorkbenchBackend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"CHAOXING_DATA_DIR": tmp}):
+                backend = WorkbenchBackend(lambda *_a, **_kw: None)
+                backend.demo_mode = True
+                backend._exam_current = {
+                    "version": 1,
+                    "revision": 1,
+                    "account_id": "offline-demo",
+                    "uid": "demo-uid",
+                    "course_id": "demo-101",
+                    "clazz_id": "demo-clazz-1",
+                    "exam_id": "demo-exam-101",
+                    "attempt_id": "demo-attempt-1",
+                    "demo": True,
+                    "title": "演示考试",
+                    "deadline_utc": "2099-01-01T00:00:00+00:00",
+                    "state": "local_draft",
+                    "prev_state": "",
+                    "reason": "",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                    "questions": [
+                        {"id": "101", "no": 1, "type": "single", "title": "题1", "options": [{"id": "A", "text": "A"}], "blank_count": 0},
+                        {"id": "102", "no": 2, "type": "single", "title": "题2", "options": [{"id": "B", "text": "B"}], "blank_count": 0},
+                    ],
+                    "answers": {},
+                }
+                preview = backend.startAutoExam(confirmed=False, sync_to_platform=True, auto_submit=True)
+                self.assertEqual(preview["questionCount"], 2)
+                self.assertTrue(preview["autoSubmit"])
+
+                # 模拟逐题事件推进 active_question_id 并在未全部答完时暂停自动交卷
+                backend._exam_operation = "exam_auto"
+                backend._exam_assist_state.update(
+                    completed=0,
+                    total=2,
+                    saved_count=0,
+                    auto_mode=True,
+                    sync_to_platform=True,
+                    auto_submit=True,
+                    pending_auto_submit=False,
+                    active_question_id="101",
+                    target_question_ids=["101", "102"],
+                )
+                with patch.object(backend, "_exam_store") as mock_store:
+                    mock_store.return_value.save.side_effect = lambda rec, raw: (rec, b"{}")
+                    backend.on_exam_event(
+                        {
+                            "type": "exam_suggestion",
+                            "run_id": backend._exam_controller.run_id,
+                            "question_id": "101",
+                            "answer": {"option_ids": ["A"], "blanks": [], "text": ""},
+                            "source": "bank:TikuDemo",
+                            "reason": "命中",
+                            "attempts": [],
+                            "platform_saved": True,
+                        }
+                    )
+                    self.assertEqual(backend._exam_assist_state["active_question_id"], "102")
+                    self.assertEqual(backend._exam_assist_state["saved_count"], 1)
+
+                    # 第 2 题未答完即结束 -> 必须暂停自动交卷
+                    backend.on_exam_event(
+                        {
+                            "type": "exam_assist_done",
+                            "run_id": backend._exam_controller.run_id,
+                            "completed": 2,
+                            "total": 2,
+                            "resolved": 1,
+                            "saved_count": 1,
+                            "message": "自动答题完成。",
+                        }
+                    )
+                    self.assertFalse(backend._exam_assist_state["pending_auto_submit"])
+                    self.assertEqual(backend._exam_feedback["tone"], "warning")
+
+                    # 第 2 题也答完后结束 -> 标记 pending_auto_submit 并在 on_exam_finished 触发 submitExam
+                    backend.on_exam_event(
+                        {
+                            "type": "exam_suggestion",
+                            "run_id": backend._exam_controller.run_id,
+                            "question_id": "102",
+                            "answer": {"option_ids": ["B"], "blanks": [], "text": ""},
+                            "source": "bank:TikuDemo",
+                            "reason": "命中",
+                            "attempts": [],
+                            "platform_saved": True,
+                        }
+                    )
+                    backend.on_exam_event(
+                        {
+                            "type": "exam_assist_done",
+                            "run_id": backend._exam_controller.run_id,
+                            "completed": 2,
+                            "total": 2,
+                            "resolved": 2,
+                            "saved_count": 2,
+                            "message": "自动答题完成。",
+                        }
+                    )
+                    self.assertTrue(backend._exam_assist_state["pending_auto_submit"])
+                    with patch.object(backend, "submitExam") as mock_submit:
+                        backend.on_exam_finished(0)
+                        mock_submit.assert_called_once_with("demo-exam-101", "demo-attempt-1")
 
 
 if __name__ == "__main__":

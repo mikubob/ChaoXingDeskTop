@@ -2,7 +2,7 @@
 
 面向 Windows 的超星课程学习工作台，用一个桌面窗口管理账号、课程、章节任务、题库与 AI 服务，以及逐题结果和日志。
 
-**版本：0.7.0** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
+**版本：0.7.1** · **Windows 10 / 11 x64** · **WinUI 3 + Python 后台** · **GPL-3.0**
 
 桌面界面采用原生 **WinUI 3（C# / Windows App SDK）**，提供账号与课程、考试与独立作业、设置和任务日志等页面。`desktop/run.py` 启动界面，账号、配置、凭据保护和任务协议由 Python 后台处理。
 
@@ -100,7 +100,8 @@ python -m venv .venv
 
 ```text
 desktop/
-├── chaoxing_desktop/       # 界面、账号、配置、调度与答案处理
+├── chaoxing_desktop/       # 账号、配置、调度与答案处理
+├── winui/                 # WinUI 3 原生界面
 ├── vendor/chaoxing/        # 平台协议适配与字体资源
 ├── scripts/               # 依赖锁定、构建与发布工具
 ├── assets/                # 应用图标与界面资源

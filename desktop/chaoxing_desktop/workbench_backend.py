@@ -4,13 +4,14 @@ from __future__ import annotations
 from datetime import datetime
 import copy
 from pathlib import Path
+import sys
 import uuid
 
 from PySide6.QtCore import QObject, Signal, Slot, QTimer
 
 from . import __version__
 from .answers import option_pairs, plain_text, question_images
-from .config import BANKS, ConfigValidationError, Redactor, course_key, data_dir, defaults, exam_answer_config, is_secret, parse_text, serialize, to_payload, validate, validate_exam_services
+from .config import BANKS, ConfigValidationError, Redactor, course_key, data_dir, defaults, exam_answer_config, is_secret, parse_text, resource_root, serialize, to_payload, validate, validate_exam_services
 from .controller import Controller
 from .exam_drafts import (
     EDITABLE_STATES,
@@ -250,6 +251,13 @@ class WorkbenchBackend(QObject):
         self._exam_assist_state = dict(
             completed=0,
             total=0,
+            saved_count=0,
+            auto_mode=False,
+            sync_to_platform=False,
+            auto_submit=False,
+            pending_auto_submit=False,
+            active_question_id="",
+            target_question_ids=[],
             replace_manual=False,
             ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
         )
@@ -2334,6 +2342,13 @@ class WorkbenchBackend(QObject):
         self._exam_assist_state = dict(
             completed=0,
             total=0,
+            saved_count=0,
+            auto_mode=False,
+            sync_to_platform=False,
+            auto_submit=False,
+            pending_auto_submit=False,
+            active_question_id="",
+            target_question_ids=[],
             replace_manual=False,
             ai_usage=dict(requests=0, limit=0, known=0, unknown=0, tokens=0),
         )
@@ -2505,13 +2520,18 @@ class WorkbenchBackend(QObject):
         assist_usage = self._exam_assist_state["ai_usage"]
         assist_payload = {
             "enabled": self.config["exam"]["assist_enabled"].lower() == "true",
-            "running": self._exam_controller.active and self._exam_operation == "exam_assist",
+            "running": self._exam_controller.active and self._exam_operation in ("exam_assist", "exam_auto"),
+            "autoMode": bool(self._exam_assist_state.get("auto_mode", False)) and self._exam_operation == "exam_auto",
+            "syncToPlatform": bool(self._exam_assist_state.get("sync_to_platform", False)),
+            "autoSubmit": bool(self._exam_assist_state.get("auto_submit", False)),
             "aiSource": self.config["exam"]["ai_source"],
             "bankSource": self.config["exam"]["bank_source"],
             "aiSummary": ai_summary,
             "bankSummary": bank_summary,
             "completed": self._exam_assist_state["completed"],
             "total": self._exam_assist_state["total"],
+            "savedCount": int(self._exam_assist_state.get("saved_count", 0)),
+            "activeQuestionId": str(self._exam_assist_state.get("active_question_id", "")),
             "aiUsage": {
                 "requests": assist_usage["requests"],
                 "limit": assist_usage["limit"],
@@ -2535,7 +2555,7 @@ class WorkbenchBackend(QObject):
             # 停止后台课程进度轮询，避免与考试／作业请求并发触发超星 HTTP 202 频控
             self.cancel_course_progress()
         demo = self.demo_mode
-        if action in ("exam_assist", "homework_assist"):
+        if action in ("exam_assist", "exam_auto", "homework_assist"):
             if not demo:
                 validate_exam_services(self.config, services=True)
                 effective, _ = exam_answer_config(self.config)
@@ -2599,6 +2619,34 @@ class WorkbenchBackend(QObject):
             raise ValueError("部分所选课程已失效，请点击「读取课程」刷新课程列表后重新选择。")
         return matched
 
+    @staticmethod
+    def _ensure_vendor_path():
+        vendor = str(resource_root() / "vendor/chaoxing")
+        if vendor not in sys.path:
+            sys.path.insert(0, vendor)
+
+    def _execute_exam(self, command):
+        try:
+            command()
+            return True
+        except Exception as exc:
+            self._exam_notify(str(exc), "danger")
+            self.notify(exc, "danger")
+            if hasattr(exc, 'section'):
+                self.locate_invalid_field(exc)
+            return False
+
+    def _execute_homework(self, command):
+        try:
+            command()
+            return True
+        except Exception as exc:
+            self._homework_notify(str(exc), "danger")
+            self.notify(exc, "danger")
+            if hasattr(exc, 'section'):
+                self.locate_invalid_field(exc)
+            return False
+
     def loadExams(self, course_keys=""):
         def run():
             if self._exam_controller.active:
@@ -2613,7 +2661,7 @@ class WorkbenchBackend(QObject):
             else:
                 scope = "全部课程"
             self._exam_notify(f"正在读取{scope}的考试安排…", "info")
-        return self.execute(run)
+        return self._execute_exam(run)
 
     def openExam(self, exam_id, confirmed=False):
         exam_id = str(exam_id or "").strip()
@@ -2671,7 +2719,7 @@ class WorkbenchBackend(QObject):
             apply_manual_answer(self._exam_current, str(question_id), answer if isinstance(answer, dict) else {})
             self._exam_dirty = True
             self._exam_notify("已记录手动修改（尚未保存到本机草稿）。", "info")
-        return self.execute(run)
+        return self._execute_exam(run)
 
     def saveExamDraft(self, to_platform=False):
         def run():
@@ -2701,7 +2749,7 @@ class WorkbenchBackend(QObject):
                 self._exam_notify("本机草稿已保存，正在同步到平台…", "info")
             else:
                 self._exam_notify("考试草稿已保存到本机。", "success")
-        return self.execute(run)
+        return self._execute_exam(run)
 
     def submitExam(self, exam_id, attempt_id):
         def run():
@@ -2751,7 +2799,7 @@ class WorkbenchBackend(QObject):
                 answers=submitting["answers"],
             )
             self._exam_notify("已记录交卷意图，正在等待回执…", "warning")
-        return self.execute(run)
+        return self._execute_exam(run)
 
     def verifyExamSubmit(self, exam_id, attempt_id):
         def run():
@@ -2800,7 +2848,7 @@ class WorkbenchBackend(QObject):
                 cpi=cpi,
             )
             self._exam_notify("正在只读核验平台收卷状态…", "info")
-        return self.execute(run)
+        return self._execute_exam(run)
 
     def exportExam(self):
         rec = self._exam_current
@@ -2864,6 +2912,13 @@ class WorkbenchBackend(QObject):
         self._exam_assist_state = dict(
             completed=0,
             total=len(target_questions),
+            saved_count=0,
+            auto_mode=False,
+            sync_to_platform=False,
+            auto_submit=False,
+            pending_auto_submit=False,
+            active_question_id="",
+            target_question_ids=[q["id"] for q in target_questions],
             replace_manual=replace_flag,
             ai_usage=dict(
                 requests=0,
@@ -2877,15 +2932,102 @@ class WorkbenchBackend(QObject):
         self._exam_notify(f"正在获取 {len(target_questions)} 道题的参考答案…", "info")
         return True
 
+    def startAutoExam(self, confirmed=False, sync_to_platform=True, auto_submit=False, replace_manual=False):
+        if self._exam_controller.active:
+            raise ValueError("已有考试操作正在进行，请稍候。")
+        if self._exam_current is None:
+            raise ValueError("请先打开试卷后再启动自动答题。")
+        rec = self._exam_current
+        if rec["state"] not in EDITABLE_STATES:
+            raise ValueError(f"当前答卷状态为「{state_text(rec['state'])}」，不能自动答题。")
+        self._require_exam_in_time()
+        replace_flag = bool(replace_manual)
+        sync_flag = bool(sync_to_platform)
+        submit_flag = bool(auto_submit)
+        target_questions = []
+        for q in sorted(rec["questions"], key=lambda item: item.get("no", 0)):
+            ans = rec["answers"].get(q["id"])
+            if ans and ans.get("source") == "manual" and not replace_flag:
+                continue
+            target_questions.append(q)
+        image_count = sum(
+            len(q.get("images") or []) + (1 if "<img" in q.get("title", "") and not q.get("images") else 0)
+            for q in target_questions
+        )
+        ai_summary, bank_summary = self._exam_effective_summaries()
+        can_save = bool(self._exam_form_meta) and not self.demo_mode
+        if not confirmed:
+            return {
+                "title": rec.get("title", ""),
+                "accountLabel": self._exam_account_label or self._exam_account_context()[2],
+                "questionCount": len(target_questions),
+                "totalCount": len(rec.get("questions") or []),
+                "imageCount": image_count,
+                "aiSummary": ai_summary,
+                "bankSummary": bank_summary,
+                "canSaveToPlatform": can_save,
+                "syncToPlatform": sync_flag,
+                "autoSubmit": submit_flag,
+                "replaceManual": replace_flag,
+            }
+        if not target_questions:
+            if submit_flag:
+                unanswered = answer_summary(rec)["unansweredNumbers"]
+                if not unanswered:
+                    return self.submitExam(rec["exam_id"], rec["attempt_id"])
+                self._exam_notify(
+                    f"没有需要自动作答的新题目，但仍有 {len(unanswered)} 题未作答（题号：{'、'.join(str(x) for x in unanswered[:10])}），已暂停自动交卷。",
+                    "warning",
+                )
+                return True
+            self._exam_notify("所有题目均已手动填写，无需自动答题。", "info")
+            return True
+        effective, _ = exam_answer_config(self.config)
+        self._exam_assist_state = dict(
+            completed=0,
+            total=len(target_questions),
+            saved_count=0,
+            auto_mode=True,
+            sync_to_platform=sync_flag,
+            auto_submit=submit_flag,
+            pending_auto_submit=False,
+            active_question_id=target_questions[0]["id"],
+            target_question_ids=[q["id"] for q in target_questions],
+            replace_manual=replace_flag,
+            ai_usage=dict(
+                requests=0,
+                limit=int(effective["ai"]["request_limit"]),
+                known=0,
+                unknown=0,
+                tokens=0,
+            ),
+        )
+        self._start_exam_worker(
+            "exam_auto",
+            exam_id=rec["exam_id"],
+            questions=target_questions,
+            sync_to_platform=sync_flag,
+            paper=rec,
+            form_meta=self._exam_form_meta,
+        )
+        mode_hint = "（逐题保存并跳到下一题" + ("，全部答完后自动交卷" if submit_flag else "，答完后由你决定是否交卷") + "）"
+        self._exam_notify(f"正在自动作答 {len(target_questions)} 道题{mode_hint}…", "info")
+        return True
+
     def cancelExamTask(self):
         if not self._exam_controller.active:
             return False
         if self._exam_operation == "exam_submit":
             raise ValueError("交卷请求已发出，不能中途撤销；请等待结果或只读核验。")
         self._exam_input = {}
+        self._exam_assist_state["pending_auto_submit"] = False
         self._exam_controller.stop()
-        notify = self._homework_notify if self._exam_operation == "homework_assist" else self._exam_notify
-        notify("正在停止获取参考答案，已填入的答案保留…", "warning")
+        if self._exam_operation == "homework_assist":
+            self._homework_notify("正在停止获取参考答案，已填入的答案保留…", "warning")
+        elif self._exam_operation == "exam_auto":
+            self._exam_notify("正在停止自动答题，已选答案与已同步进度保留…", "warning")
+        else:
+            self._exam_notify("正在停止获取参考答案，已填入的答案保留…", "warning")
         self.examChanged.emit()
         return True
 
@@ -3048,6 +3190,9 @@ class WorkbenchBackend(QObject):
             qid = event["question_id"]
             src = event.get("source", "")
             reason = self.redact(event.get("reason", ""))
+            save_reason = self.redact(event.get("save_reason", ""))
+            if save_reason and save_reason not in reason:
+                reason = f"{reason}（{save_reason}）" if reason else save_reason
             ans_payload = dict(event.get("answer") or {}, reason=reason)
             if src:
                 try:
@@ -3068,16 +3213,70 @@ class WorkbenchBackend(QObject):
                     entry = copy.deepcopy(cur_ans) if cur_ans else empty_answer()
                     entry["reason"] = reason[:1000]
                     self._exam_current["answers"][qid] = entry
+            if event.get("platform_saved"):
+                self._exam_assist_state["saved_count"] = int(self._exam_assist_state.get("saved_count", 0)) + 1
             self._exam_assist_state["completed"] = min(
                 self._exam_assist_state["total"],
                 self._exam_assist_state["completed"] + 1,
             )
+            if self._exam_assist_state.get("auto_mode"):
+                # 自动答题模式：逐题保存本机草稿并将界面焦点推进到下一题
+                try:
+                    updated, raw = self._exam_store().save(self._exam_current, self._exam_raw)
+                    self._exam_current = updated
+                    self._exam_raw = raw
+                    self._exam_dirty = False
+                except (OSError, ValueError):
+                    pass
+                target_ids = list(self._exam_assist_state.get("target_question_ids") or [])
+                if qid in target_ids:
+                    idx = target_ids.index(qid)
+                    self._exam_assist_state["active_question_id"] = (
+                        target_ids[idx + 1] if idx + 1 < len(target_ids) else qid
+                    )
             self.examChanged.emit()
             return
         if kind == "exam_assist_done":
             self._exam_outcome = True
             self._exam_assist_state["completed"] = event["completed"]
             self._exam_assist_state["total"] = event["total"]
+            if "saved_count" in event:
+                self._exam_assist_state["saved_count"] = int(event["saved_count"])
+            rolling_enc = event.get("rolling_enc") or []
+            if rolling_enc and len(rolling_enc) == 3 and all(rolling_enc) and isinstance(self._exam_form_meta, dict):
+                self._exam_form_meta["rolling_enc"] = list(rolling_enc)
+            if self._exam_current is not None and self._exam_dirty and self._exam_current["state"] in EDITABLE_STATES:
+                try:
+                    updated, raw = self._exam_store().save(self._exam_current, self._exam_raw)
+                    self._exam_current = updated
+                    self._exam_raw = raw
+                    self._exam_dirty = False
+                except (OSError, ValueError):
+                    pass
+            if self._exam_assist_state.get("auto_mode") and self._exam_assist_state.get("auto_submit"):
+                if (
+                    self._exam_current is not None
+                    and self._exam_current["state"] in EDITABLE_STATES
+                    and not self._exam_controller.stopping
+                    and self._exam_remaining_seconds(self._exam_current["deadline_utc"]) > 0
+                ):
+                    unanswered = answer_summary(self._exam_current)["unansweredNumbers"]
+                    if not unanswered:
+                        self._exam_assist_state["pending_auto_submit"] = True
+                        self._exam_notify(
+                            (event.get("message") or "自动答题完成。") + " 全部题目已作答，即将自动交卷并核验…",
+                            "info",
+                        )
+                        return
+                    unanswered_text = "、".join(str(x) for x in unanswered[:10])
+                    if len(unanswered) > 10:
+                        unanswered_text += " 等"
+                    self._exam_assist_state["pending_auto_submit"] = False
+                    self._exam_notify(
+                        f"自动答题完成，但尚有 {len(unanswered)} 题未命中答案（题号：{unanswered_text}），已暂停自动交卷，请补全后手动交卷。",
+                        "warning",
+                    )
+                    return
             self._exam_notify(event.get("message") or "参考答案获取完成。", "success")
             return
         if kind == "exam_saved":
@@ -3250,6 +3449,8 @@ class WorkbenchBackend(QObject):
         self._exam_input = {}
         op = self._exam_operation
         outcome = self._exam_outcome
+        pending_auto_submit = bool(self._exam_assist_state.get("pending_auto_submit", False))
+        self._exam_assist_state["pending_auto_submit"] = False
         self._exam_operation = ""
         self._exam_outcome = False
         if op == "exam_submit" and not outcome:
@@ -3269,6 +3470,11 @@ class WorkbenchBackend(QObject):
                 self._homework_notify("作业后台已结束，但未收到有效结果，请重试。", "warning")
             elif op.startswith("exam_"):
                 self._exam_notify("考试后台已结束，但未收到有效结果，请重试。", "warning")
+        elif op == "exam_auto" and pending_auto_submit and code == 0 and self._exam_current is not None:
+            rec = self._exam_current
+            if rec["state"] in EDITABLE_STATES and self._exam_remaining_seconds(rec["deadline_utc"]) > 0:
+                self.submitExam(rec["exam_id"], rec["attempt_id"])
+                return
         self.examChanged.emit()
         self.homeworkChanged.emit()
 
@@ -3374,7 +3580,7 @@ class WorkbenchBackend(QObject):
             else:
                 scope = "全部课程"
             self._homework_notify(f"正在读取{scope}的作业列表…", "info")
-        return self.execute(run)
+        return self._execute_homework(run)
 
     def loadHomework(self, url=""):
         def run():
@@ -3383,13 +3589,14 @@ class WorkbenchBackend(QObject):
             if self._homework_current is not None and self._homework_dirty:
                 raise ValueError("当前作业草稿有未保存修改，请先保存或关闭后再读取新作业。")
             if not self.demo_mode:
+                self._ensure_vendor_path()
                 from api.homework import validate_homework_url
                 clean_url = validate_homework_url(str(url or "").strip())
             else:
                 clean_url = ""
             self._start_exam_worker("homework_load", url=clean_url)
             self._homework_notify("正在读取独立作业（仅保存本机草稿，不向平台提交）…", "info")
-        return self.execute(run)
+        return self._execute_homework(run)
 
     def openHomeworkDraft(self, draft_id):
         def run():
@@ -3407,7 +3614,7 @@ class WorkbenchBackend(QObject):
             if not self.demo_mode:
                 message += "如需暂存到平台，请返回列表并重新读取作业链接。"
             self._homework_notify(message, "info")
-        return self.execute(run)
+        return self._execute_homework(run)
 
     def setHomeworkAnswer(self, question_id, answer):
         def run():
@@ -3422,7 +3629,7 @@ class WorkbenchBackend(QObject):
             )
             self._homework_dirty = True
             self._homework_notify("已记录手动修改（尚未保存到本机草稿）。", "info")
-        return self.execute(run)
+        return self._execute_homework(run)
 
     def saveHomeworkDraft(self, to_platform=False):
         def run():
@@ -3443,7 +3650,7 @@ class WorkbenchBackend(QObject):
                 self._homework_notify("本机草稿已保存，正在暂存到平台（不提交）…", "info")
             else:
                 self._homework_notify("作业草稿已保存到本机（未向平台提交）。", "success")
-        return self.execute(run)
+        return self._execute_homework(run)
 
     def requestHomeworkSuggestions(self, scope="all", confirmed=False, replace_manual=False):
         if self._exam_controller.active:
@@ -3507,7 +3714,7 @@ class WorkbenchBackend(QObject):
             if not self._homework_store().delete_draft(did):
                 raise ValueError("未找到要删除的作业草稿。")
             self._homework_notify("已删除指定的本机作业草稿。", "info")
-        return self.execute(run)
+        return self._execute_homework(run)
 
     def closeHomework(self, discard=False):
         if self._exam_controller.active:

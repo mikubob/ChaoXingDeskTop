@@ -260,6 +260,8 @@ class Controller(QObject):
         if kind in ("exam_suggestion", "homework_suggestion"):
             ans = event.get("answer")
             attempts = event.get("attempts")
+            platform_saved = event.get("platform_saved", False)
+            save_reason = event.get("save_reason", "")
             return (
                 isinstance(event.get("question_id"), str)
                 and 0 < len(event["question_id"]) <= 256
@@ -277,11 +279,21 @@ class Controller(QObject):
                 and isinstance(attempts, list)
                 and len(attempts) <= 32
                 and all(isinstance(a, dict) for a in attempts)
+                and type(platform_saved) is bool
+                and isinstance(save_reason, str)
+                and len(save_reason) <= 500
             )
         if kind in ("exam_assist_done", "homework_assist_done"):
+            saved_count = event.get("saved_count", 0)
+            rolling_enc = event.get("rolling_enc", [])
             return (
                 all(type(event.get(k)) is int and 0 <= event[k] <= 10**6 for k in ("completed", "total", "resolved"))
                 and event["completed"] <= event["total"]
+                and type(saved_count) is int
+                and 0 <= saved_count <= 10**6
+                and isinstance(rolling_enc, list)
+                and len(rolling_enc) <= 3
+                and all(isinstance(v, str) and len(v) <= 256 for v in rolling_enc)
                 and isinstance(event.get("message", ""), str)
                 and len(event.get("message", "")) <= 2000
             )

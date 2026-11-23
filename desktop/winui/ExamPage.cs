@@ -26,7 +26,7 @@ public sealed partial class MainWindow
 
     // 答题视图控件
     private Button? examBackButton, examPrevButton, examNextButton, examSaveButton, examSavePlatformButton, examVerifyButton, examSubmitButton;
-    private Button? examAssistAllButton, examAssistOneButton, examAssistCancelButton, examAssistSettingsButton;
+    private Button? examAutoAnswerButton, examAssistAllButton, examAssistOneButton, examAssistCancelButton, examAssistSettingsButton;
     private Button? examExportButton;
     private TextBlock? examEditorTitle, examEditorAccount, examTimerText, examStateText, examProgressText, examAssistStatusText;
     private InfoBar? examEditorNotice;
@@ -42,6 +42,7 @@ public sealed partial class MainWindow
     private string examRenderedQuestionKey = "";
     private string examLastListSignature = "";
     private string examInputSignature = "";
+    private string examAutoFollowedQuestionId = "";
     private ContentDialog? examInputDialog;
     private int examCurrentQuestionIndex;
     private bool examPopulatingQuestion;
@@ -173,6 +174,7 @@ public sealed partial class MainWindow
         // 底部栏
         examPrevButton = Button("上一题", () => { SelectExamQuestion(examCurrentQuestionIndex - 1); return Task.CompletedTask; });
         examNextButton = Button("下一题", () => { SelectExamQuestion(examCurrentQuestionIndex + 1); return Task.CompletedTask; });
+        examAutoAnswerButton = Button("自动答题…", StartAutoExamAsync, color: "#2563EB");
         examAssistAllButton = Button("获取参考答案…", () => RequestExamSuggestionsAsync("all"));
         examAssistOneButton = Button("本题参考答案", () => RequestExamSuggestionsAsync("current"));
         examAssistCancelButton = Button("取消获取", async () => await Call("cancelExamTask"));
@@ -202,7 +204,7 @@ public sealed partial class MainWindow
         examExportButton = Button("导出答卷…", () => SaveAnswerTextAsync("exportExam", "考试答卷"));
 
         var navActions = Row(examPrevButton, examNextButton);
-        examAssistActions = Row(examAssistAllButton, examAssistOneButton, examAssistCancelButton, examAssistSettingsButton, examAssistStatusText);
+        examAssistActions = Row(examAutoAnswerButton, examAssistAllButton, examAssistOneButton, examAssistCancelButton, examAssistSettingsButton, examAssistStatusText);
         var submitActions = Row(examSaveButton, examSavePlatformButton, examVerifyButton, examSubmitButton, examExportButton);
         var bottomBar = Card(Column(StretchRow(navActions, submitActions), examAssistActions));
         bottomBar.Padding = new Thickness(16, 12, 16, 12);
@@ -585,6 +587,30 @@ public sealed partial class MainWindow
 
         var questions = J.A(current["questions"]).ToArray();
         if (questions.Length == 0) return;
+
+        var assist = exam["assist"] as JsonObject ?? new JsonObject();
+        bool assistEnabled = J.B(assist, "enabled");
+        bool assistRunning = J.B(assist, "running");
+        bool autoMode = J.B(assist, "autoMode");
+        string activeQid = J.S(assist, "activeQuestionId");
+        if (assistRunning && autoMode && activeQid.Length > 0 && activeQid != examAutoFollowedQuestionId)
+        {
+            examAutoFollowedQuestionId = activeQid;
+            for (int i = 0; i < questions.Length; i++)
+            {
+                if (J.S(questions[i], "id") == activeQid)
+                {
+                    examCurrentQuestionIndex = i;
+                    examRenderedQuestionKey = "";
+                    break;
+                }
+            }
+        }
+        else if (!assistRunning)
+        {
+            examAutoFollowedQuestionId = "";
+        }
+
         if (examCurrentQuestionIndex < 0 || examCurrentQuestionIndex >= questions.Length)
             examCurrentQuestionIndex = 0;
 
@@ -648,11 +674,10 @@ public sealed partial class MainWindow
             UpdateQuestionSourceHeader(currentQuestion);
         }
 
-        var assist = exam["assist"] as JsonObject ?? new JsonObject();
-        bool assistEnabled = J.B(assist, "enabled");
-        bool assistRunning = J.B(assist, "running");
+        bool syncToPlatform = J.B(assist, "syncToPlatform");
+        int savedCount = J.I(assist, "savedCount");
         if (examAssistActions != null)
-            examAssistActions.Visibility = assistEnabled ? Visibility.Visible : Visibility.Collapsed;
+            examAssistActions.Visibility = (assistEnabled || editable) ? Visibility.Visible : Visibility.Collapsed;
 
         if (examBackButton != null) examBackButton.IsEnabled = !busy;
         if (examPrevButton != null) examPrevButton.IsEnabled = examCurrentQuestionIndex > 0;
@@ -680,6 +705,11 @@ public sealed partial class MainWindow
             examSubmitButton.IsEnabled = canEdit;
         }
 
+        if (examAutoAnswerButton != null)
+        {
+            examAutoAnswerButton.Visibility = assistEnabled && !assistRunning && editable ? Visibility.Visible : Visibility.Collapsed;
+            examAutoAnswerButton.IsEnabled = canEdit;
+        }
         if (examAssistAllButton != null)
         {
             examAssistAllButton.Visibility = assistEnabled && !assistRunning && editable ? Visibility.Visible : Visibility.Collapsed;
@@ -691,14 +721,26 @@ public sealed partial class MainWindow
             examAssistOneButton.IsEnabled = canEdit;
         }
         if (examAssistCancelButton != null)
+        {
+            examAssistCancelButton.Content = autoMode ? "停止自动答题" : "取消获取";
             examAssistCancelButton.Visibility = assistEnabled && assistRunning ? Visibility.Visible : Visibility.Collapsed;
+        }
         if (examAssistSettingsButton != null)
-            examAssistSettingsButton.Visibility = assistEnabled ? Visibility.Visible : Visibility.Collapsed;
+            examAssistSettingsButton.Visibility = (assistEnabled || editable) ? Visibility.Visible : Visibility.Collapsed;
         if (examAssistStatusText != null)
         {
             if (assistRunning)
             {
-                examAssistStatusText.Text = $"参考答案 {J.I(assist, "completed")} / {J.I(assist, "total")}";
+                examAssistStatusText.Text = autoMode
+                    ? (syncToPlatform
+                        ? $"自动答题 {J.I(assist, "completed")} / {J.I(assist, "total")}（已同步 {savedCount} 题）"
+                        : $"自动答题 {J.I(assist, "completed")} / {J.I(assist, "total")}")
+                    : $"参考答案 {J.I(assist, "completed")} / {J.I(assist, "total")}";
+                examAssistStatusText.Visibility = Visibility.Visible;
+            }
+            else if (!assistEnabled && editable)
+            {
+                examAssistStatusText.Text = "在「答题服务设置」中启用考试答题服务后，可使用自动答题与参考答案。";
                 examAssistStatusText.Visibility = Visibility.Visible;
             }
             else
@@ -973,6 +1015,65 @@ public sealed partial class MainWindow
         };
         if (await Confirm("确认交卷", string.Join("\n", lines), "确认交卷"))
             await Call("submitExam", examId, attemptId);
+    }
+
+    private async Task StartAutoExamAsync()
+    {
+        var current = backend.State["exam"]?["current"] as JsonObject;
+        if (current == null || current.Count == 0) return;
+
+        var preview = await Call("startAutoExam", false, true, false, false);
+        if (preview is not JsonObject info) return;
+
+        bool canSave = J.B(info, "canSaveToPlatform");
+        bool isDemo = J.B(Summary, "demo");
+        int qCount = J.I(info, "questionCount");
+        int totalCount = J.I(info, "totalCount");
+        int imgCount = J.I(info, "imageCount");
+
+        var summaryText = Text(string.Join("\n", new[]
+        {
+            $"账号：{J.S(info, "accountLabel", "当前账号")}",
+            $"试卷：{J.S(info, "title")}",
+            $"生效 AI 服务：{J.S(info, "aiSummary")}",
+            $"生效题库：{J.S(info, "bankSummary")}",
+            $"待作答题目：{qCount} / {totalCount} 题（含图题：{imgCount} 处）",
+        }), 13);
+
+        var syncCheck = new CheckBox
+        {
+            Content = canSave
+                ? "逐题保存答案到平台并自动跳到下一题"
+                : (isDemo ? "逐题模拟保存并自动跳到下一题" : "逐题保存本机草稿并自动跳到下一题"),
+            IsChecked = true,
+        };
+        var submitCheck = new CheckBox
+        {
+            Content = "全部题目答完后自动交卷",
+            IsChecked = false,
+        };
+        var submitHint = Text("默认不自动交卷，答完后停留在答题页由你核对。若勾选自动交卷：交卷后不可修改；如有题目未命中答案，会自动暂停交卷并保留在答题页。", 12, true);
+        var replaceCheck = new CheckBox
+        {
+            Content = "覆盖已手动填写的题目",
+            IsChecked = false,
+        };
+
+        var panel = Column(summaryText, syncCheck, submitCheck, submitHint, replaceCheck);
+        panel.Spacing = 10;
+
+        var dialog = Dialog("启动自动答题", panel, "取消");
+        dialog.PrimaryButtonText = "开始自动答题";
+        if (await ShowModal(dialog) == ContentDialogResult.Primary)
+        {
+            await Call(
+                "startAutoExam",
+                true,
+                syncCheck.IsChecked == true,
+                submitCheck.IsChecked == true,
+                replaceCheck.IsChecked == true
+            );
+        }
     }
 
     private async Task RequestExamSuggestionsAsync(string scopeMode)

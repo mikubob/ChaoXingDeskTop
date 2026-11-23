@@ -20,10 +20,8 @@ def source_files(desktop: Path):
         "tests/test_homework_drafts.py",
         "tests/test_ordered_chapters.py",
         "tests/test_winui_bridge.py",
-        # Public compile input: ChaoxingDesktop.csproj uses it as ApplicationIcon
-        # and copies it next to the executable. Only this file is added; the
-        # assets filter stays SVG-only so no other binary is swept in.
-        "assets/app.ico",
+        # SVG 是应用图标源文件，ICO 供 WinUI 和冻结后台构建使用。
+        "assets/app.svg", "assets/app.ico",
     )
     files = [desktop / name for name in root_files]
     for path in (desktop / 'winui').rglob('*'):
@@ -35,7 +33,6 @@ def source_files(desktop: Path):
     for directory, extensions in (
         ("chaoxing_desktop", {".py"}),
         ("scripts", {".py", ".ps1", ".nsi"}),
-        ("assets", {".svg"}),
         ("tests/fixtures/exam", {".html"}),
         ("tests/fixtures/homework", {".html"}),
         ("vendor/chaoxing/api", {".py", ".md"}),

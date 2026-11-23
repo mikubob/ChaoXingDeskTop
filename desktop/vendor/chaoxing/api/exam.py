@@ -456,8 +456,8 @@ class ExamAdapter:
                 status = "submitted"
                 status_text = "已交卷"
             elif tip_text:
-                native_supported = False
-                status = "blocked"
+                # 超星对已满足条件的考试也会保留 .span_tip（例如“完成100%任务点可参加考试”），
+                # 因此保留提示文本但不直接阻断，交由进入考试时的 examnotes/开卷页校验真实准入。
                 reason = tip_text
 
             results.append(
@@ -830,6 +830,49 @@ class ExamAdapter:
         finally:
             response.close()
 
+    def save_question_once(
+        self,
+        cookies,
+        paper: dict,
+        form_meta: dict,
+        question: dict,
+        answers: dict,
+        *,
+        rolling_enc: tuple[str, str, str] | list[str] | None = None,
+    ) -> dict:
+        """0 重试临时保存单道题目答案到平台，并回传服务端滚动签名供下一题和交卷使用。"""
+        qid = str(question["id"])
+        q_form = (form_meta.get("questions") or {}).get(qid) or {}
+        q_hidden = dict(q_form.get("hidden_fields") or form_meta.get("hidden_fields") or {})
+        enc_tuple = tuple(rolling_enc) if rolling_enc and len(rolling_enc) == 3 and all(rolling_enc) else None
+        if enc_tuple is not None:
+            q_hidden["encLastUpdateTime"], q_hidden["encRemainTime"], q_hidden["enc"] = enc_tuple
+        sub_meta = {
+            "submit_url": form_meta.get("submit_url"),
+            "hidden_fields": q_hidden,
+            "questions": {qid: q_form},
+        }
+        url, params, payload = self._build_submit_request(
+            {**paper, "questions": [question]}, sub_meta, answers, temp_save=True
+        )
+        try:
+            data = self._post_once(
+                cookies,
+                url,
+                params,
+                payload,
+                referer=str(form_meta.get("start_url") or "https://mooc1-api.chaoxing.com/"),
+            )
+        except (RequestException, PlatformResponseError) as exc:
+            return {"saved": False, "reason": f"保存第 {question.get('no', '')} 题失败：{exc}", "rolling_enc": list(enc_tuple) if enc_tuple else []}
+        if data.get("status") == "error":
+            msg = plain_text(str(data.get("msg") or "平台拒绝保存"))[:200]
+            return {"saved": False, "reason": f"平台拒绝保存第 {question.get('no', '')} 题：{msg}", "rolling_enc": list(enc_tuple) if enc_tuple else []}
+        raw_data = str(data.get("data") or "")
+        parts = raw_data.split("|")
+        next_enc = parts if len(parts) == 3 and all(parts) else (list(enc_tuple) if enc_tuple else [])
+        return {"saved": True, "reason": "已同步到平台。", "rolling_enc": next_enc}
+
     def save_once(self, cookies, paper: dict, form_meta: dict, answers: dict) -> dict:
         """0 重试临时保存答案到平台，并回读试卷核对已保存内容。"""
         questions = paper.get("questions") or []
@@ -917,7 +960,17 @@ class ExamAdapter:
 
     def submit_once(self, cookies, paper: dict, form_meta: dict, answers: dict) -> dict:
         """0 重试发送一次交卷请求，随后只读核验平台是否已收卷。"""
-        url, params, payload = self._build_submit_request(paper, form_meta, answers, temp_save=False)
+        effective_meta = dict(form_meta)
+        rolling_enc = form_meta.get("rolling_enc")
+        if isinstance(rolling_enc, (list, tuple)) and len(rolling_enc) == 3 and all(rolling_enc):
+            merged_hidden = dict(form_meta.get("hidden_fields") or {})
+            merged_hidden["encLastUpdateTime"], merged_hidden["encRemainTime"], merged_hidden["enc"] = (
+                str(rolling_enc[0]),
+                str(rolling_enc[1]),
+                str(rolling_enc[2]),
+            )
+            effective_meta["hidden_fields"] = merged_hidden
+        url, params, payload = self._build_submit_request(paper, effective_meta, answers, temp_save=False)
         try:
             data = self._post_once(
                 cookies,
