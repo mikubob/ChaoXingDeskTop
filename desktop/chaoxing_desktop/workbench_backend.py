@@ -2531,6 +2531,9 @@ class WorkbenchBackend(QObject):
     def _start_exam_worker(self, action: str, **extra):
         if self._exam_controller.active:
             raise ValueError("已有考试操作正在进行，请稍候。")
+        if self._course_controller.active:
+            # 停止后台课程进度轮询，避免与考试／作业请求并发触发超星 HTTP 202 频控
+            self.cancel_course_progress()
         demo = self.demo_mode
         if action in ("exam_assist", "homework_assist"):
             if not demo:

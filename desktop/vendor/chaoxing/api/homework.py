@@ -329,6 +329,7 @@ class HomeworkAdapter:
     def read(self, session: requests.Session, url: str, params: dict | None = None, *,
              retry_throttled: bool = False) -> tuple[str, str]:
         current = _trusted_chaoxing_url(url)
+        referer = "https://mooc1.chaoxing.com/"
         throttled = 0
         redirects = 0
         while redirects < 6:
@@ -337,7 +338,11 @@ class HomeworkAdapter:
                 params=params,
                 allow_redirects=False,
                 timeout=20,
-                headers={"Referer": "https://mooc1.chaoxing.com/"},
+                headers={
+                    "Referer": referer,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                },
             )
             if retry_throttled and response.status_code in (202, 429):
                 response.close()
@@ -356,6 +361,7 @@ class HomeworkAdapter:
                 if urlsplit(dest).hostname == "passport2.chaoxing.com":
                     raise PlatformResponseError("作业会话已失效，请重新登录。", "auth_error")
                 current = _trusted_chaoxing_url(dest)
+                referer = current
                 redirects += 1
                 continue
             try:

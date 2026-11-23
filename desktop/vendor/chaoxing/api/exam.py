@@ -280,6 +280,7 @@ class ExamAdapter:
              retry_throttled: bool = False) -> tuple[str, str]:
         """沿受信重定向链执行只读 GET，拒绝非白名单跳转并识别会话失效。"""
         current = trusted_url(url)
+        referer = "https://mooc1.chaoxing.com/"
         throttled = 0
         redirects = 0
         while redirects < 6:
@@ -288,7 +289,11 @@ class ExamAdapter:
                 params=params,
                 allow_redirects=False,
                 timeout=20,
-                headers={"Referer": "https://mooc1.chaoxing.com/"},
+                headers={
+                    "Referer": referer,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                },
             )
             if retry_throttled and response.status_code in (202, 429):
                 response.close()
@@ -308,6 +313,7 @@ class ExamAdapter:
                 if urlsplit(destination).hostname == "passport2.chaoxing.com":
                     raise PlatformResponseError("考试会话已失效，请重新登录。", "auth_error")
                 current = trusted_url(destination)
+                referer = current
                 redirects += 1
                 continue
             try:
