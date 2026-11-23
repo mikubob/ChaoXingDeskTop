@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>考试</title></head>
+<body>
+<input type="hidden" id="courseId" value="100001"/>
+<input type="hidden" id="classId" value="200001"/>
+<input type="hidden" id="cpi" value="300001"/>
+<div class="bottomList">
+  <ul>
+    <li>
+      <div onclick="goTest('100001',400001,500001,'2026-12-31 09:20:00.0',600001,false,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '0');" role="option" tabindex="0">
+        <div class="tag icon-exam"></div>
+        <div class="right-content">
+          <p class="overHidden2 fl">模拟期末考试</p>
+          <div class="clear"></div>
+          <p class="status fl">待做</p>
+        </div>
+      </div>
+      <div class="time notOver">剩余120小时30分钟</div>
+    </li>
+    <li>
+      <div onclick="goTest('100001',400002,0,'2026-12-31 23:59:59.0',600002,false,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '0');" role="option" tabindex="0">
+        <div class="tag icon-exam"></div>
+        <div class="right-content">
+          <p class="overHidden2 fl">课程结业考试</p>
+          <div class="clear"></div>
+          <p class="status fl">待做</p>
+          <div class="span_tip" title="完成100%任务点可参加考试">
+            <span>完成100%任务点可参加考试</span>
+          </div>
+        </div>
+      </div>
+      <div class="time notOver">剩余300小时0分钟</div>
+    </li>
+    <li>
+      <div onclick="goTest('100001',400003,500003,'2026-10-01 12:00:00.0',600003,false,'cccccccccccccccccccccccccccccccc', '0');" role="option" tabindex="0">
+        <div class="tag icon-exam"></div>
+        <div class="right-content">
+          <p class="overHidden2 fl">期中补考</p>
+          <div class="clear"></div>
+          <p class="status fl">已过期</p>
+        </div>
+      </div>
+      <div class="time">已截止</div>
+    </li>
+    <li>
+      <div onclick="goTest('100001',400004,500004,'2026-12-20 12:00:00.0',600004,false,'dddddddddddddddddddddddddddddddd', '0');" role="option" tabindex="0">
+        <div class="tag icon-exam"></div>
+        <div class="right-content">
+          <p class="overHidden2 fl">随堂小测</p>
+          <div class="clear"></div>
+          <p class="status fl">已完成</p>
+        </div>
+      </div>
+      <div class="time">已交卷</div>
+    </li>
+  </ul>
+</div>
+<script>
+var TestRelationInfo = {
+  "400001": {"limitTime": 60},
+  "400002": {"limitTime": 90},
+  "400003": {"limitTime": 45},
+  "400004": {"limitTime": 30}
+};
+</script>
+</body>
+</html>

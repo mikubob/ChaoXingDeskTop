@@ -55,11 +55,11 @@ def verify_worker(root):
         raise RuntimeError('冻结后台探针运行失败。')
     result = json.loads(probe.stdout.splitlines()[-1])
     checks = ('captcha_ready', 'review_policy_ready', 'matching_ready', 'ocs_ready',
-              'discussion_ready', 'activity_ready')
+              'discussion_ready', 'activity_ready', 'exam_ready', 'homework_ready')
     if (result.get('type') != 'probe' or result.get('bank_protocol') != 'v2-text-and-images'
             or not all(result.get(check) is True for check in checks)):
         raise RuntimeError('冻结后台探针未通过资源与协议自检。')
-    print('冻结后台探针通过，已核验题库、图片编码、OCR、讨论和活动模块。')
+    print('冻结后台探针通过，已核验题库、图片编码、OCR、讨论、活动、考试和作业模块。')
 
 
 if __name__ == '__main__':

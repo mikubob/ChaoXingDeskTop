@@ -30,7 +30,11 @@ BOOLEAN_KEYS = {
     "desktop": ("manual_fallback", "random_fallback", "auto_save", "auto_login"),
     "question_bank": ("likeapi_search", "likeapi_vision", "likeapi_retry", "yanxi_query_variants"),
     "matching": ("fuzzy_options", "reuse_similar"),
+    "exam": ("assist_enabled",),
 }
+BOOLEAN_KEYS["exam_ai"] = BOOLEAN_KEYS["ai"]
+BOOLEAN_KEYS["exam_question_bank"] = BOOLEAN_KEYS["question_bank"]
+EXAM_SOURCES = ("shared", "custom")
 
 
 def resource_root() -> Path:
@@ -97,6 +101,9 @@ def defaults() -> configparser.ConfigParser:
     config['question_bank'].update(declarative_definition='', declarative_token='',
                                   declarative_timeout='30', declarative_min_interval='1.0',
                                   declarative_retries='2', request_budget='12')
+    config['exam'] = dict(assist_enabled='false', ai_source='shared', bank_source='shared')
+    config['exam_ai'] = dict(config['ai'])
+    config['exam_question_bank'] = dict(config['question_bank'])
     return config
 
 
@@ -184,8 +191,39 @@ class ConfigValidationError(ValueError):
         self.section, self.key = section, key
 
 
+def exam_answer_config(config: configparser.ConfigParser) -> tuple[configparser.ConfigParser, dict[str, str]]:
+    """生成考试参考答案查询生效的配置，并保留节映射以回传校验错误位置。"""
+    effective = parse_text(serialize(config))
+    exam = effective["exam"]
+    ai_source = exam["ai_source"].strip().lower()
+    bank_source = exam["bank_source"].strip().lower()
+    section_map = {
+        "ai": "exam_ai" if ai_source == "custom" else "ai",
+        "question_bank": "exam_question_bank" if bank_source == "custom" else "question_bank",
+    }
+    if ai_source == "custom":
+        effective["ai"] = dict(effective["exam_ai"])
+    if bank_source == "custom":
+        effective["question_bank"] = dict(effective["exam_question_bank"])
+    effective["desktop"]["manual_fallback"] = "false"
+    effective["desktop"]["random_fallback"] = "false"
+    effective["tiku"]["submit"] = "false"
+    for section in ("exam", "exam_ai", "exam_question_bank"):
+        effective.remove_section(section)
+    return effective, section_map
+
+
+def validate_exam_services(config: configparser.ConfigParser, *, services: bool = False) -> None:
+    """校验考试答题服务配置，并将错误节映射回对应的考试独立配置节。"""
+    effective, section_map = exam_answer_config(config)
+    try:
+        validate(effective, services=services, _validate_exam=False)
+    except ConfigValidationError as exc:
+        raise ConfigValidationError(str(exc), section_map.get(exc.section, exc.section), exc.key) from None
+
+
 def validate(config: configparser.ConfigParser, login: bool = False, services: bool = False,
-             cookie_path: Path | None = None) -> None:
+             cookie_path: Path | None = None, *, _validate_exam: bool = True) -> None:
     if config.get('format', 'version', fallback='') != str(CONFIG_VERSION):
         raise ValueError('配置格式版本无效或来自更新版本')
     c, t, n = (config[s] for s in ("common", "tiku", "notification"))
@@ -193,7 +231,7 @@ def validate(config: configparser.ConfigParser, login: bool = False, services: b
     from .settings_schema import SCHEMA
     fields = {(f['section'], f['key']): f for groups in SCHEMA.values() for group in groups for f in group['fields']}
     numeric = [(config[section], key, spec['low'], spec['high'], int if spec['kind'] == 'integer' else float)
-               for (section, key), spec in fields.items() if spec['kind'] in ('integer', 'number')]
+               for (section, key), spec in fields.items() if spec['kind'] in ('integer', 'number') and config.has_section(section)]
     numeric.append((t, 'cover_rate', 0, 1, float))
     if config['question_bank']['declarative_definition'].strip():
         from .declarative import validate_definition
@@ -212,9 +250,15 @@ def validate(config: configparser.ConfigParser, login: bool = False, services: b
             title = fields.get((section.name, key), {}).get('title', key)
             raise ConfigValidationError(f"{title}（{key}）必须在 {low}–{high} 范围内。", section.name, key) from None
     for section, keys in BOOLEAN_KEYS.items():
+        if not config.has_section(section):
+            continue
         for key in keys:
             if config[section][key].lower() not in ("true", "false"):
                 raise ConfigValidationError(f"{key} 应填写 true 或 false。", section, key)
+    if config.has_section("exam"):
+        for key in ("ai_source", "bank_source"):
+            if config["exam"][key] not in EXAM_SOURCES:
+                raise ConfigValidationError("考试答题服务来源应为 shared 或 custom。", "exam", key)
     if config['matching']['bank_review_policy'] not in {value for _, value in BANK_REVIEW_POLICIES}:
         raise ConfigValidationError('题库答案审核策略无效，请选择严格核验、跟随 AI 状态或选项优先。', 'matching', 'bank_review_policy')
     if config['discussion']['reply_level'] not in {value for _, value in DISCUSSION_LEVELS}:
@@ -227,7 +271,7 @@ def validate(config: configparser.ConfigParser, login: bool = False, services: b
         raise ConfigValidationError("关闭章节策略应为 retry、ask 或 continue。", 'common', 'notopen_action')
     names = [s.strip() for s in config["question_bank"]["providers"].split(",") if s.strip()]
     if t["provider"] or any(s not in dict((value, title) for title, value in BANKS) for s in names) or len(names) != len(set(names)):
-        raise ValueError("题库配置无效，请在题库列表中选择服务。")
+        raise ConfigValidationError("题库配置无效，请在题库列表中选择服务。", 'question_bank', 'providers')
     if config["ai"]["provider"] not in ("AI", "SiliconFlow"):
         raise ConfigValidationError("AI 服务类型无效。", 'ai', 'provider')
     if n["provider"] and n["provider"] not in NOTIFICATIONS:
@@ -258,18 +302,29 @@ def validate(config: configparser.ConfigParser, login: bool = False, services: b
                 raise ConfigValidationError(f"{title}应为完整的 HTTP 或 HTTPS 地址。", section, key)
         if n["provider"] and not n["url"].strip():
             raise ConfigValidationError("启用通知时需要填写通知 URL。", 'notification', 'url')
+    if _validate_exam and all(config.has_section(s) for s in ("exam", "exam_ai", "exam_question_bank")):
+        validate_exam_services(config, services=False)
 
 
 def to_payload(config: configparser.ConfigParser) -> dict:
     payload = {s: dict(config[s]) for s in config.sections()}
     for section, keys in BOOLEAN_KEYS.items():
+        if section not in payload:
+            continue
         for key in keys:
             payload[section][key] = payload[section][key].lower()
-    payload["question_bank"]["providers"] = ",".join(x.strip() for x in payload["question_bank"]["providers"].split(",") if x.strip())
-    for key in ("yanxi_tokens", "like_tokens"):
-        payload["question_bank"][key] = ",".join(x.strip() for x in payload["question_bank"][key].split(",") if x.strip())
-    for key in ("endpoint", "key", "model", "http_proxy"):
-        payload["ai"][key] = payload["ai"][key].strip()
+    for bank_section in ("question_bank", "exam_question_bank"):
+        if bank_section in payload:
+            payload[bank_section]["providers"] = ",".join(x.strip() for x in payload[bank_section]["providers"].split(",") if x.strip())
+            for key in ("yanxi_tokens", "like_tokens"):
+                payload[bank_section][key] = ",".join(x.strip() for x in payload[bank_section][key].split(",") if x.strip())
+    for ai_section in ("ai", "exam_ai"):
+        if ai_section in payload:
+            for key in ("endpoint", "key", "model", "http_proxy"):
+                payload[ai_section][key] = payload[ai_section][key].strip()
+    if "exam" in payload:
+        for key in ("ai_source", "bank_source"):
+            payload["exam"][key] = payload["exam"][key].strip().lower()
     c, t = payload["common"], payload["tiku"]
     for key in ("speed", "retry_interval"):
         c[key] = float(c[key])

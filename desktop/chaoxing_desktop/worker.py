@@ -11,7 +11,7 @@ import threading
 import queue
 import uuid
 from .control import RunControl, Cancelled, ResumeFailed, checkpoint, wait as controlled_wait
-from .image_cache import profile_image_cache, remove_image_cache
+from .image_cache import PAPER_IMAGE_ACTIONS, paper_image_cache, profile_image_cache, remove_image_cache
 from .query_result import safe_record
 
 from .config import Redactor, course_key, resource_root, select_courses
@@ -108,7 +108,492 @@ def load_core(channel):
     return runtime
 
 
+def _synthetic_png(color: int = 0x2563EB) -> bytes:
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage
+    picture = QImage(32, 20, QImage.Format.Format_RGB32)
+    picture.fill(color)
+    stream = QBuffer()
+    stream.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not picture.save(stream, "PNG"):
+        raise RuntimeError("合成演示 PNG 失败")
+    return bytes(stream.data())
+
+
+def demo_exam_list() -> list[dict]:
+    return [
+        {
+            "examId": "demo-exam-101",
+            "courseId": "demo-101",
+            "clazzId": "01",
+            "courseTitle": "Python 程序设计 · 演示",
+            "title": "Python 程序设计期中测试（演示）",
+            "timeText": "进行中 · 60 分钟",
+            "modeText": "线上开卷 · 允许 1 次",
+            "status": "ready",
+            "statusText": "可进入",
+            "nativeSupported": True,
+            "reason": "",
+            "officialUrl": "https://mooc1.chaoxing.com/exam-ans/demo-101",
+        },
+        {
+            "examId": "demo-exam-102",
+            "courseId": "demo-102",
+            "clazzId": "02",
+            "courseTitle": "大学英语 · 演示",
+            "title": "大学英语期末考试（演示）",
+            "timeText": "未开始 · 12-20 09:00",
+            "modeText": "限时闭卷 · 90 分钟",
+            "status": "not_started",
+            "statusText": "未开始",
+            "nativeSupported": False,
+            "reason": "考试尚未到达开放时间，暂不可进入。",
+            "officialUrl": "https://mooc1.chaoxing.com/exam-ans/demo-102",
+        },
+        {
+            "examId": "demo-exam-103",
+            "courseId": "demo-103",
+            "clazzId": "03",
+            "courseTitle": "信息素养 · 演示",
+            "title": "信息素养随堂测验（演示）",
+            "timeText": "已结束 · 11-01 18:00",
+            "modeText": "线上测试 · 已截止",
+            "status": "ended",
+            "statusText": "已结束",
+            "nativeSupported": False,
+            "reason": "该场考试已过截止时间。",
+            "officialUrl": "https://mooc1.chaoxing.com/exam-ans/demo-103",
+        },
+        {
+            "examId": "demo-exam-104",
+            "courseId": "demo-101",
+            "clazzId": "01",
+            "courseTitle": "Python 程序设计 · 演示",
+            "title": "Python 综合监考机考（演示）",
+            "timeText": "进行中 · 120 分钟",
+            "modeText": "指定客户端 · 人脸识别 + 切屏检测",
+            "status": "proctored",
+            "statusText": "需官方入口",
+            "nativeSupported": False,
+            "reason": "该场次要求指定考试客户端、人脸识别与切屏监考，不支持在桌面工作台内答题，请打开官方入口。",
+            "officialUrl": "https://mooc1.chaoxing.com/exam-ans/demo-104",
+        },
+    ]
+
+
+def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_event="exam_assist_done"):
+    from datetime import datetime, timedelta, timezone
+    action = command["action"]
+    if action == "exam_list":
+        controlled_wait(channel, 0.1)
+        channel.send("exam_list", exams=demo_exam_list(), demo=True)
+        return
+    if action == "exam_open":
+        exam_id = str(command.get("exam_id") or "demo-exam-101")
+        entry = next((item for item in demo_exam_list() if item["examId"] == exam_id), None)
+        if entry is None:
+            raise ValueError("未找到对应的演示考试场次。")
+        if not entry["nativeSupported"]:
+            raise ValueError(entry["reason"] or "该场考试不支持在桌面工作台内作答。")
+        now = datetime.now(timezone.utc)
+        deadline = (now + timedelta(minutes=60)).isoformat(timespec="seconds")
+        image_uris = []
+        if channel.image_cache_dir is not None:
+            img_path = channel.image_cache_dir / "demo_exam_q105.png"
+            img_path.write_bytes(_synthetic_png())
+            image_uris.append(img_path.as_uri())
+        questions = [
+            {
+                "id": "101",
+                "no": 1,
+                "type": "single",
+                "title": "在 Python 中，用于定义函数的关键字是哪一个？",
+                "options": [
+                    {"id": "A", "text": "def"},
+                    {"id": "B", "text": "function"},
+                    {"id": "C", "text": "func"},
+                    {"id": "D", "text": "lambda"},
+                ],
+                "blank_count": 0,
+                "score": "20",
+            },
+            {
+                "id": "102",
+                "no": 2,
+                "type": "multiple",
+                "title": "以下属于 Python 内置可变容器类型的有哪些？",
+                "options": [
+                    {"id": "A", "text": "list"},
+                    {"id": "B", "text": "dict"},
+                    {"id": "C", "text": "tuple"},
+                    {"id": "D", "text": "set"},
+                ],
+                "blank_count": 0,
+                "score": "20",
+            },
+            {
+                "id": "103",
+                "no": 3,
+                "type": "judgement",
+                "title": "Python 中的列表（list）可以作为字典（dict）的键。",
+                "options": [
+                    {"id": "正确", "text": "正确"},
+                    {"id": "错误", "text": "错误"},
+                ],
+                "blank_count": 0,
+                "score": "20",
+            },
+            {
+                "id": "104",
+                "no": 4,
+                "type": "completion",
+                "title": "HTTP 协议默认端口为 ____，HTTPS 协议默认端口为 ____。",
+                "options": [],
+                "blank_count": 2,
+                "score": "20",
+            },
+            {
+                "id": "105",
+                "no": 5,
+                "type": "single",
+                "title": "观察附图所示的复杂度曲线，二分查找的平均时间复杂度为？",
+                "options": [
+                    {"id": "A", "text": "O(1)"},
+                    {"id": "B", "text": "O(log n)"},
+                    {"id": "C", "text": "O(n)"},
+                    {"id": "D", "text": "O(n^2)"},
+                ],
+                "blank_count": 0,
+                "score": "20",
+                "images": image_uris,
+            },
+        ]
+        paper = {
+            "course_id": entry["courseId"],
+            "clazz_id": entry["clazzId"],
+            "course_title": entry["courseTitle"],
+            "exam_id": entry["examId"],
+            "attempt_id": "demo-attempt-1",
+            "title": entry["title"],
+            "deadline_utc": deadline,
+            "demo": True,
+            "questions": questions,
+        }
+        controlled_wait(channel, 0.1)
+        channel.send(
+            "exam_opened",
+            paper=paper,
+            server_now_utc=now.isoformat(timespec="seconds"),
+            platform_answers={},
+        )
+        return
+    if action == "exam_assist":
+        config = command.get("config") or {}
+        ai_cfg = config.get("ai") or {}
+        bank_cfg = config.get("question_bank") or {}
+        questions = command.get("questions") or []
+        if not isinstance(questions, list):
+            raise ValueError("待查询题目列表无效。")
+        providers = [p.strip() for p in str(bank_cfg.get("providers", "")).split(",") if p.strip()]
+        bank_provider = providers[0] if providers else "TikuDemo"
+        bank_source = f"bank:{bank_provider}"
+        policy = str(ai_cfg.get("image_confirm_policy", "ask")).strip().lower()
+        vision_raw = str(ai_cfg.get("vision", "true")).strip().lower()
+        vision_enabled = vision_raw != "false" or str(ai_cfg.get("enabled", "false")).strip().lower() != "true"
+        image_questions = [q for q in questions if isinstance(q, dict) and (q.get("images") or "<img" in str(q.get("title", "")))]
+        allow_images = True
+        if image_questions:
+            if not vision_enabled:
+                allow_images = False
+            elif policy == "always_skip":
+                allow_images = False
+            elif policy == "always_allow":
+                allow_images = True
+            else:
+                endpoint = str(ai_cfg.get("endpoint") or "https://demo-ai.invalid/v1")
+                img_count = sum(max(1, len(q.get("images") or [])) for q in image_questions)
+                choice = channel.ask(
+                    f"允许把本批 {len(image_questions)} 道含图考试题及 {img_count} 处图片发送给以下 AI 服务？\n{endpoint}",
+                    kind="choice",
+                    choices=[
+                        {"label": "跳过图片题的 AI 补全", "value": "skip"},
+                        {"label": "发送图片给 AI", "value": "allow-images"},
+                    ],
+                )
+                allow_images = choice == "allow-images"
+        resolved = 0
+        ai_requests = 0
+        limit = int(ai_cfg.get("request_limit") or 0)
+        for q in questions:
+            checkpoint(channel)
+            if not isinstance(q, dict):
+                continue
+            qid = str(q.get("id", ""))
+            qtype = str(q.get("type", ""))
+            has_img = bool(q.get("images") or "<img" in str(q.get("title", "")))
+            if qid == "101" or (qtype == "single" and not has_img):
+                opt_id = "A" if any(o.get("id") == "A" for o in q.get("options", [])) else (q["options"][0]["id"] if q.get("options") else "A")
+                channel.send(
+                    suggestion_event,
+                    question_id=qid,
+                    answer={"option_ids": [opt_id], "blanks": [], "text": ""},
+                    source=bank_source,
+                    reason="演示题库命中，选项核验通过。",
+                    attempts=[{"provider": bank_provider, "status": "hit", "reason": "演示题库命中"}],
+                )
+                resolved += 1
+            elif qid == "102" or qtype == "multiple":
+                opts = [o["id"] for o in q.get("options", []) if o.get("id") in ("A", "B", "D")] or [o["id"] for o in q.get("options", [])[:2]]
+                channel.send(
+                    suggestion_event,
+                    question_id=qid,
+                    answer={"option_ids": opts, "blanks": [], "text": ""},
+                    source=bank_source,
+                    reason="演示题库命中多选选项。",
+                    attempts=[{"provider": bank_provider, "status": "hit", "reason": "演示题库命中"}],
+                )
+                resolved += 1
+            elif qid == "103" or qtype == "judgement":
+                channel.send(
+                    suggestion_event,
+                    question_id=qid,
+                    answer={"option_ids": ["错误"], "blanks": [], "text": ""},
+                    source=bank_source,
+                    reason="演示题库判断核验通过。",
+                    attempts=[{"provider": bank_provider, "status": "hit", "reason": "演示题库命中"}],
+                )
+                resolved += 1
+            elif qid == "104" or qtype == "completion":
+                blank_count = int(q.get("blank_count") or 2)
+                blanks = ["80", "443"][:blank_count] + ["演示答案"] * max(0, blank_count - 2)
+                ai_requests += 1
+                channel.send("ai_usage", requests=ai_requests, limit=limit, known=ai_requests, unknown=0, tokens=ai_requests * 60)
+                channel.send(
+                    suggestion_event,
+                    question_id=qid,
+                    answer={"option_ids": [], "blanks": blanks, "text": ""},
+                    source="ai",
+                    reason="演示 AI 生成逐空参考答案，请核对。",
+                    attempts=[{"provider": "AI", "status": "hit", "reason": "演示 AI 生成参考答案"}],
+                )
+                resolved += 1
+            elif qid == "105" or has_img:
+                if not allow_images:
+                    reason = "视觉识图已关闭，未请求 AI。" if not vision_enabled else "已跳过向 AI 发送图片题。"
+                    channel.send(
+                        suggestion_event,
+                        question_id=qid,
+                        answer={"option_ids": [], "blanks": [], "text": ""},
+                        source="",
+                        reason=reason,
+                        attempts=[{"provider": "AI", "status": "skipped", "reason": reason}],
+                    )
+                else:
+                    opt_id = "B" if any(o.get("id") == "B" for o in q.get("options", [])) else (q["options"][0]["id"] if q.get("options") else "B")
+                    ai_requests += 1
+                    channel.send("ai_usage", requests=ai_requests, limit=limit, known=ai_requests, unknown=0, tokens=ai_requests * 60)
+                    channel.send(
+                        suggestion_event,
+                        question_id=qid,
+                        answer={"option_ids": [opt_id], "blanks": [], "text": ""},
+                        source="ai",
+                        reason="演示 AI 视觉识图返回参考答案，请核对。",
+                        attempts=[{"provider": "AI", "status": "hit", "reason": "演示 AI 视觉识图命中"}],
+                    )
+                    resolved += 1
+            else:
+                channel.send(
+                    suggestion_event,
+                    question_id=qid,
+                    answer={"option_ids": [], "blanks": [], "text": "演示简答参考答案"},
+                    source="ai",
+                    reason="演示 AI 生成简答参考。",
+                    attempts=[{"provider": "AI", "status": "hit", "reason": "演示 AI 生成参考答案"}],
+                )
+                resolved += 1
+        channel.send(
+            done_event,
+            completed=len(questions),
+            total=len(questions),
+            resolved=resolved,
+            message=f"参考答案查询完成：共处理 {len(questions)} 题，生成 {resolved} 题参考答案。",
+        )
+        return
+    if action == "exam_submit":
+        exam_id = str(command.get("exam_id") or "demo-exam-101")
+        attempt_id = str(command.get("attempt_id") or "demo-attempt-1")
+        controlled_wait(channel, 0.1)
+        channel.send(
+            "exam_submitted",
+            exam_id=exam_id,
+            attempt_id=attempt_id,
+            state="simulated_submitted",
+            reason="离线演示模拟交卷完成，未向超星平台发送任何请求。",
+        )
+        return
+
+
+def demo_homework(channel, command):
+    action = command["action"]
+    if action == "homework_list":
+        channel.send(
+            "homework_list",
+            demo=True,
+            homeworks=[
+                {
+                    "workId": "demo-work-101",
+                    "courseId": "demo-course-1",
+                    "clazzId": "demo-clazz-1",
+                    "courseTitle": "数据结构与算法（演示）",
+                    "title": "第三次课后作业：二叉树与图",
+                    "status": "todo",
+                    "statusText": "未交",
+                    "timeText": "剩余 48 小时",
+                    "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?courseId=demo-course-1&workId=demo-work-101",
+                    "canOpen": True,
+                    "reason": "",
+                },
+                {
+                    "workId": "demo-work-102",
+                    "courseId": "demo-course-1",
+                    "clazzId": "demo-clazz-1",
+                    "courseTitle": "数据结构与算法（演示）",
+                    "title": "第二次课后作业：栈与队列",
+                    "status": "submitted",
+                    "statusText": "待批阅",
+                    "timeText": "",
+                    "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?courseId=demo-course-1&workId=demo-work-102",
+                    "canOpen": False,
+                    "reason": "当前状态为「待批阅」，请在官方入口查看。",
+                },
+            ],
+        )
+        return
+    if action == "homework_load":
+        image_uris = []
+        if channel.image_cache_dir is not None:
+            img_path = channel.image_cache_dir / "demo_hw_q5.png"
+            img_path.write_bytes(_synthetic_png())
+            image_uris.append(img_path.as_uri())
+        questions = [
+            {
+                "id": "hw-101",
+                "no": 1,
+                "type": "single",
+                "type_name": "单选题",
+                "title": "在 HTTP 协议中，表示资源未找到的状态码是？",
+                "options": [
+                    {"id": "A", "text": "200"},
+                    {"id": "B", "text": "404"},
+                    {"id": "C", "text": "500"},
+                ],
+                "blank_count": 0,
+                "supported": True,
+                "reason": "",
+            },
+            {
+                "id": "hw-102",
+                "no": 2,
+                "type": "multiple",
+                "type_name": "多选题",
+                "title": "以下属于传输层协议的有哪些？",
+                "options": [
+                    {"id": "A", "text": "TCP"},
+                    {"id": "B", "text": "UDP"},
+                    {"id": "C", "text": "ICMP"},
+                ],
+                "blank_count": 0,
+                "supported": True,
+                "reason": "",
+            },
+            {
+                "id": "hw-103",
+                "no": 3,
+                "type": "judgement",
+                "type_name": "判断题",
+                "title": "HTTPS 在 HTTP 之上增加了 TLS/SSL 加密传输层。",
+                "options": [
+                    {"id": "正确", "text": "正确"},
+                    {"id": "错误", "text": "错误"},
+                ],
+                "blank_count": 0,
+                "supported": True,
+                "reason": "",
+            },
+            {
+                "id": "hw-104",
+                "no": 4,
+                "type": "completion",
+                "type_name": "填空题",
+                "title": "IPv4 地址由 ____ 位二进制组成，IPv6 地址由 ____ 位二进制组成。",
+                "options": [],
+                "blank_count": 2,
+                "supported": True,
+                "reason": "",
+            },
+            {
+                "id": "hw-105",
+                "no": 5,
+                "type": "single",
+                "type_name": "单选题",
+                "title": "观察附图，该网络拓扑属于哪一类？",
+                "options": [
+                    {"id": "A", "text": "星型拓扑"},
+                    {"id": "B", "text": "总线拓扑"},
+                    {"id": "C", "text": "环型拓扑"},
+                ],
+                "blank_count": 0,
+                "images": image_uris,
+                "supported": True,
+                "reason": "",
+            },
+            {
+                "id": "hw-106",
+                "no": 6,
+                "type": "unsupported",
+                "type_name": "附件题",
+                "title": "请上传本次实验的抓包分析报告（.pcapng / .pdf）。",
+                "options": [],
+                "blank_count": 0,
+                "supported": False,
+                "reason": "暂不支持「附件题」在本机草稿中作答，请按原题单独处理。",
+            },
+        ]
+        controlled_wait(channel, 0.1)
+        channel.send(
+            "homework_loaded",
+            demo=True,
+            homework={
+                "title": "计算机网络独立作业 · 离线演示",
+                "url": "",
+                "course_id": "demo-101",
+                "clazz_id": "01",
+                "work_id": "demo-hw-1",
+                "questions": questions,
+            },
+        )
+        return
+    if action == "homework_assist":
+        demo_exam(
+            channel,
+            {
+                **command,
+                "action": "exam_assist",
+                "questions": [q for q in (command.get("questions") or []) if q.get("supported", True) and q.get("type") != "unsupported"],
+            },
+            suggestion_event="homework_suggestion",
+            done_event="homework_assist_done",
+        )
+        return
+
+
 def demo(channel, command):
+    if str(command.get("action", "")).startswith("exam_"):
+        demo_exam(channel, command)
+        return
+    if str(command.get("action", "")).startswith("homework_"):
+        demo_homework(channel, command)
+        return
     courses = [dict(courseId="demo-101", clazzId="01", cpi="demo", title="Python 程序设计 · 演示"),
                dict(courseId="demo-102", clazzId="02", cpi="demo", title="大学英语 · 演示"),
                dict(courseId="demo-103", clazzId="03", cpi="demo", title="信息素养 · 演示")]
@@ -284,8 +769,346 @@ def handle_result(future, task, attempt, retry, statuses, channel, config, resul
     channel.send("task", id=task["id"], status=status)
 
 
+def _download_exam_images(session, channel, image_urls: dict) -> dict[str, list[str]]:
+    """把试卷题图缓存到运行期 image_cache_dir，返回 qid -> [file:// URI]。"""
+    if channel.image_cache_dir is None or not image_urls:
+        return {}
+    cached: dict[str, list[str]] = {}
+    for qid, urls in image_urls.items():
+        uris: list[str] = []
+        for url in urls:
+            try:
+                resp = session.get(url, timeout=15)
+                if resp.status_code == 200 and len(resp.content) <= 8 * 1024 * 1024:
+                    ext = ".png"
+                    ctype = str(resp.headers.get("Content-Type") or "").lower()
+                    if "jpeg" in ctype or "jpg" in ctype:
+                        ext = ".jpg"
+                    elif "webp" in ctype:
+                        ext = ".webp"
+                    img_path = channel.image_cache_dir / f"{uuid.uuid4().hex}{ext}"
+                    img_path.write_bytes(resp.content)
+                    uris.append(img_path.as_uri())
+                resp.close()
+            except Exception:
+                continue
+        if uris:
+            cached[str(qid)] = uris
+    return cached
+
+
+class _ExamAssistChannel:
+    """拦截 AnswerRouter 发出的 question_result，记录每题实际命中的来源与原因。"""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.results: dict[str, dict] = {}
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def send(self, event_type, **kwargs):
+        if event_type == "question_result":
+            rec = kwargs.get("record") or {}
+            qid = str(rec.get("question_id") or "")
+            if qid:
+                self.results[qid] = {
+                    "source": str(rec.get("source") or ""),
+                    "reason": str(rec.get("reason") or ""),
+                    "attempts": list(rec.get("attempts") or []),
+                }
+            return
+        self._inner.send(event_type, **kwargs)
+
+
+def _map_choice_ids(q: dict, rq: dict, raw_ans) -> list[str]:
+    letters = rq.get("desktop_answer_letters") or []
+    if isinstance(letters, str):
+        letters = list(letters)
+    if letters:
+        return [str(x) for x in letters if str(x)]
+    options = q.get("options") or []
+    by_text = {str(o.get("text") or "").strip(): str(o.get("id") or "") for o in options}
+    by_id = {str(o.get("id") or "").strip(): str(o.get("id") or "") for o in options}
+    items = raw_ans if isinstance(raw_ans, list) else [s.strip() for s in str(raw_ans).split("#") if s.strip()]
+    mapped = []
+    for item in items:
+        if item in by_id:
+            mapped.append(by_id[item])
+        elif item in by_text:
+            mapped.append(by_text[item])
+    if not mapped and isinstance(raw_ans, str) and len(raw_ans.strip()) <= len(options):
+        for ch in raw_ans.strip():
+            if ch in by_id:
+                mapped.append(by_id[ch])
+    return list(dict.fromkeys(mapped))
+
+
+def _exam_image_src(uri: str, cache_dir: Path | None) -> str:
+    """将本地缓存的 file:// 题图转为 data:image/...;base64 URI，供 AnswerRouter 识图。"""
+    if uri.startswith(("https://", "http://", "data:image/")):
+        return uri
+    if uri.startswith("file://") and cache_dir is not None:
+        from urllib.parse import unquote, urlsplit
+        import base64
+        parsed = urlsplit(uri)
+        raw_path = unquote(parsed.path or "")
+        if len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+        p = Path(raw_path).resolve()
+        root = cache_dir.resolve()
+        if p.is_file() and (p == root or root in p.parents):
+            ext = p.suffix.lower()
+            mime = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/webp" if ext == ".webp" else "image/png"
+            return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+    return ""
+
+
+def real_exam_assist(channel, command, *, suggestion_event="exam_suggestion", done_event="exam_assist_done"):
+    """使用 Exam 生效配置（题库 + AI）为指定考试或作业题目生成参考答案。"""
+    from .answers import build_answers
+
+    raw_questions = command.get("questions") or []
+    if not isinstance(raw_questions, list):
+        raise ValueError("待查询题目列表无效。")
+    questions = [q for q in raw_questions if isinstance(q, dict) and q.get("supported", True) and q.get("type") != "unsupported"]
+    assist_channel = _ExamAssistChannel(channel)
+    router = build_answers(command["config"], assist_channel)
+    router.set_context(task_id="exam", work_id=str(command.get("exam_id") or "exam"))
+
+    router_questions = []
+    for q in questions:
+        if not isinstance(q, dict):
+            continue
+        qtype = str(q.get("type") or "")
+        title = str(q.get("title") or "")
+        for uri in q.get("images") or []:
+            src = _exam_image_src(str(uri or ""), paper_image_cache(command["data_dir"]))
+            if src and src not in title:
+                title += f'<img src="{src}">'
+        opts = []
+        if qtype in ("single", "multiple"):
+            for opt in q.get("options") or []:
+                oid = str(opt.get("id") or "")
+                otext = str(opt.get("text") or "")
+                opts.append(f"{oid}.{otext}" if oid else otext)
+        rq = {
+            "id": str(q.get("id") or ""),
+            "type": qtype,
+            "title": title,
+            "options": opts,
+        }
+        if qtype == "completion":
+            rq["completion_parts"] = int(q.get("blank_count") or 1)
+        router_questions.append(rq)
+
+    results = router.query_all(router_questions, query_delay=0)
+    resolved = 0
+    for q, rq, raw_ans in zip(questions, router_questions, results):
+        checkpoint(channel)
+        qid = str(q.get("id") or "")
+        qtype = str(q.get("type") or "")
+        meta = assist_channel.results.get(qid) or {}
+        src = meta.get("source") or str(rq.get("desktop_answer_source") or "")
+        reason = meta.get("reason") or str(rq.get("desktop_rejection_reason") or "")
+        attempts = meta.get("attempts") or []
+        answer_obj = {"option_ids": [], "blanks": [], "text": ""}
+        if raw_ans is not None and src:
+            if qtype in ("single", "multiple"):
+                answer_obj["option_ids"] = _map_choice_ids(q, rq, raw_ans)
+            elif qtype == "judgement":
+                val = str(raw_ans).strip()
+                if val in ("正确", "对", "True", "true", "1", "√"):
+                    answer_obj["option_ids"] = ["正确"]
+                elif val in ("错误", "错", "False", "false", "0", "×"):
+                    answer_obj["option_ids"] = ["错误"]
+            elif qtype == "completion":
+                parts = rq.get("desktop_completion_parts")
+                if isinstance(parts, list):
+                    answer_obj["blanks"] = [str(x) for x in parts]
+                else:
+                    blank_count = int(q.get("blank_count") or 1)
+                    answer_obj["blanks"] = [str(raw_ans)] + [""] * max(0, blank_count - 1)
+            elif qtype == "shortanswer":
+                answer_obj["text"] = str(raw_ans)
+            if any((answer_obj["option_ids"], answer_obj["text"].strip(), any(b.strip() for b in answer_obj["blanks"]))):
+                resolved += 1
+                if not reason:
+                    reason = "已生成参考答案，请核对。"
+            else:
+                src = ""
+                if not reason:
+                    reason = "未能匹配到可用参考答案。"
+        else:
+            src = ""
+            if not reason:
+                reason = "题库与 AI 均未命中可用参考答案。"
+
+        channel.send(
+            suggestion_event,
+            question_id=qid,
+            answer=answer_obj,
+            source=src,
+            reason=reason,
+            attempts=attempts,
+        )
+
+    channel.send(
+        done_event,
+        completed=len(questions),
+        total=len(questions),
+        resolved=resolved,
+        message=f"参考答案查询完成：共处理 {len(questions)} 题，生成 {resolved} 题参考答案。",
+    )
+
+
+def real_exam_action(channel, command, cx, session):
+    """在真实会话下执行考试列表、开卷、保存、交卷与只读核验。"""
+    from api.exam import ExamAdapter
+
+    action = command["action"]
+    adapter = ExamAdapter()
+    if action == "exam_list":
+        courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
+        exams = adapter.list_exams(session, courses)
+        channel.send("exam_list", exams=exams, demo=False)
+        return
+    if action == "exam_open":
+        entry = command.get("exam_entry") or {"examId": command.get("exam_id", "")}
+        res = adapter.open_exam(session, entry)
+        if not res.get("native_supported"):
+            channel.send(
+                "exam_unavailable",
+                exam_id=entry["examId"], course_id=entry["courseId"], clazz_id=entry["clazzId"],
+                reason=res.get("reason") or "该场考试不支持在桌面工作台内作答。",
+            )
+            return
+        paper = dict(res["paper"])
+        cached_imgs = _download_exam_images(session, channel, res.get("image_urls") or {})
+        for q in paper.get("questions") or []:
+            qid = str(q.get("id") or "")
+            if qid in cached_imgs:
+                q["images"] = cached_imgs[qid]
+        channel.send(
+            "exam_opened",
+            paper=paper,
+            server_now_utc=res.get("server_now_utc", ""),
+            platform_answers=res.get("platform_answers") or {},
+            form_meta=res.get("form_meta") or {},
+        )
+        return
+    if action == "exam_save":
+        paper = command.get("paper") or {}
+        form_meta = command.get("form_meta") or {}
+        answers = command.get("answers") or {}
+        if not form_meta:
+            raise ValueError("缺少试卷提交上下文，请重新打开试卷后再保存到平台。")
+        res = adapter.save_once(session.cookies, paper, form_meta, answers)
+        channel.send(
+            "exam_saved",
+            exam_id=str(paper.get("exam_id") or command.get("exam_id") or ""),
+            attempt_id=str(paper.get("attempt_id") or command.get("attempt_id") or ""),
+            verified=bool(res.get("verified")),
+            reason=str(res.get("reason") or ""),
+        )
+        return
+    if action == "exam_submit":
+        paper = command.get("paper") or {}
+        form_meta = command.get("form_meta") or {}
+        answers = command.get("answers") or {}
+        if not form_meta:
+            channel.send(
+                "exam_submitted",
+                exam_id=str(paper.get("exam_id") or command.get("exam_id") or ""),
+                attempt_id=str(paper.get("attempt_id") or command.get("attempt_id") or ""),
+                state="submit_unknown",
+                reason="缺少试卷提交上下文，请点击核验或在官方入口确认交卷状态。",
+            )
+            return
+        res = adapter.submit_once(session.cookies, paper, form_meta, answers)
+        channel.send(
+            "exam_submitted",
+            exam_id=str(paper.get("exam_id") or command.get("exam_id") or ""),
+            attempt_id=str(paper.get("attempt_id") or command.get("attempt_id") or ""),
+            state=str(res.get("state") or "submit_unknown"),
+            reason=str(res.get("reason") or ""),
+        )
+        return
+    if action == "exam_verify":
+        entry = command.get("exam_entry") or {
+            "courseId": command.get("course_id", ""),
+            "clazzId": command.get("clazz_id", ""),
+            "examId": command.get("exam_id", ""),
+            "attemptId": command.get("attempt_id", ""),
+            "cpi": command.get("cpi", "0"),
+        }
+        res = adapter.verify_submitted(session, entry)
+        channel.send(
+            "exam_submitted",
+            exam_id=str(entry.get("examId") or command.get("exam_id") or ""),
+            attempt_id=str(entry.get("attemptId") or command.get("attempt_id") or ""),
+            state="submitted" if res.get("confirmed") else "submit_unknown",
+            reason=str(res.get("reason") or ""),
+        )
+        return
+
+
+    if action == "homework_list":
+        from api.homework import HomeworkAdapter
+        courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
+        works = HomeworkAdapter().list_homeworks(session, courses)
+        channel.send("homework_list", homeworks=works, demo=False)
+        return
+
+    if action == "homework_load":
+        from api.homework import HomeworkAdapter
+        url = str(command.get("url") or "").strip()
+        parsed = HomeworkAdapter().load_homework(session, url)
+        cached_imgs = _download_exam_images(session, channel, parsed.get("image_urls") or {})
+        for q in parsed.get("questions") or []:
+            qid = str(q.get("id") or "")
+            if qid in cached_imgs:
+                q["images"] = cached_imgs[qid]
+        channel.send(
+            "homework_loaded",
+            demo=False,
+            platform_answers=parsed.get("platform_answers") or {},
+            form_meta=parsed.get("form_meta") or {},
+            homework={
+                "title": parsed["title"],
+                "url": parsed["url"],
+                "course_id": parsed["course_id"],
+                "clazz_id": parsed["clazz_id"],
+                "work_id": parsed["work_id"],
+                "questions": parsed["questions"],
+            },
+        )
+        return
+    if action == "homework_save":
+        from api.homework import HomeworkAdapter
+        hw = command.get("homework") or {}
+        form_meta = command.get("form_meta") or {}
+        answers = command.get("answers") or {}
+        if not form_meta:
+            raise ValueError("缺少作业平台保存上下文，请重新通过链接读取作业后再保存到平台。")
+        res = HomeworkAdapter().save_once(session.cookies, hw, form_meta, answers)
+        channel.send(
+            "homework_saved",
+            work_id=str(hw.get("work_id") or ""),
+            verified=bool(res.get("verified")),
+            reason=str(res.get("reason") or ""),
+        )
+        return
+
+
 def real(channel, command):
     checkpoint(channel)
+    if command.get("action") == "exam_assist":
+        real_exam_assist(channel, command)
+        return
+    if command.get("action") == "homework_assist":
+        real_exam_assist(channel, command, suggestion_event="homework_suggestion", done_event="homework_assist_done")
+        return
     core = load_core(channel)
     checkpoint(channel)
     account_id = command.get('account_id')
@@ -319,8 +1142,9 @@ def real(channel, command):
         raise ValueError('只读核验仅使用已读取课程的 Cookie 会话，请先重新读课。')
     if verifying:
         channel.send('verification_progress', phase='session', message='正在校验账号会话…', completed=0, total=0, reads=0, failures=0, elapsed_ms=0)
+    exam_actions = ('exam_list', 'exam_open', 'exam_save', 'exam_submit', 'exam_verify', 'homework_list', 'homework_load', 'homework_save')
     cx = core.create_client(command["config"], channel,
-                            courses_only=command["action"] in ('courses', 'verify', 'course_progress'))
+                            courses_only=command["action"] in ('courses', 'verify', 'course_progress') + exam_actions)
     checkpoint(channel)
     login = cx.login(login_with_cookies=common["use_cookies"])
     if not login.get("status"):
@@ -342,6 +1166,10 @@ def real(channel, command):
             lineage = command.get('lineage') or uuid.uuid4().hex
             cx.desktop_quiz_guard = QuizGuard(QuizAttemptStore(command['data_dir'], account_id, uid), lineage, channel)
     checkpoint(channel)
+    if command["action"] in exam_actions:
+        from api.base import SessionManager
+        real_exam_action(channel, command, cx, SessionManager.get_session())
+        return
     if verifying:
         channel.send('verification_progress', phase='courses', message='会话已校验，正在读取课程身份…', completed=0, total=0, reads=0, failures=0, elapsed_ms=0)
     courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
@@ -599,8 +1427,10 @@ def main() -> int:
         path = Path(command["data_dir"]).resolve()
         path.mkdir(parents=True, exist_ok=True)
         os.chdir(path)
-        if command.get('action') == 'run' and re.fullmatch(r'[0-9a-f]{32}', str(command.get('run_id', ''))):
-            directory = profile_image_cache(path) / channel.run_id
+        action = command.get('action')
+        if (action == 'run' or action in PAPER_IMAGE_ACTIONS) and re.fullmatch(r'[0-9a-f]{32}', channel.run_id):
+            root = paper_image_cache if action in PAPER_IMAGE_ACTIONS else profile_image_cache
+            directory = root(path) / channel.run_id
             if directory.is_dir() and directory.resolve() == directory:
                 channel.image_cache_dir = directory
         if command.get("action") == "probe":
@@ -673,9 +1503,64 @@ def main() -> int:
                     or len(activity_key('probe', 'course', 'class', 'space', 'activity')) != 64
                     or not callable(ActivityAdapter.submit_once)):
                 raise RuntimeError('活动生成、存储或平台适配模块检查失败')
+            from .config import exam_answer_config
+            from .exam_drafts import exam_draft_key, validate_draft, STATE_LOCAL_DRAFT
+            exam_eff, exam_map = exam_answer_config(defaults())
+            probe_draft = {
+                "version": 1,
+                "revision": 0,
+                "account_id": "probe_account",
+                "uid": "probe_uid",
+                "course_id": "probe_course",
+                "clazz_id": "probe_clazz",
+                "exam_id": "probe_exam",
+                "attempt_id": "probe_attempt",
+                "demo": True,
+                "title": "探针自检试卷",
+                "deadline_utc": "2026-11-23T10:30:00+00:00",
+                "state": STATE_LOCAL_DRAFT,
+                "prev_state": "",
+                "reason": "",
+                "updated_at": "2026-11-23T09:00:00+00:00",
+                "questions": [
+                    {
+                        "id": "1",
+                        "no": 1,
+                        "type": "single",
+                        "title": "1+1=?",
+                        "options": [{"id": "A", "text": "2"}],
+                        "blank_count": 0,
+                    }
+                ],
+                "answers": {},
+            }
+            validate_draft(probe_draft)
+            if (
+                len(exam_draft_key("probe", "uid", "course", "clazz", "exam", "attempt")) != 64
+                or exam_eff["desktop"]["random_fallback"] != "false"
+                or exam_eff["desktop"]["manual_fallback"] != "false"
+                or exam_eff["tiku"]["submit"] != "false"
+                or set(exam_map) != {"ai", "question_bank"}
+            ):
+                raise RuntimeError("考试草稿与答题服务配置模块检查失败")
+            from api.exam import ExamAdapter
+            if not all(
+                callable(getattr(ExamAdapter, m, None))
+                for m in ("list_exams", "open_exam", "save_once", "submit_once", "verify_submitted")
+            ):
+                raise RuntimeError("考试协议适配模块检查失败")
+            from api.homework import HomeworkAdapter, validate_homework_url
+            from .homework_drafts import HomeworkDraftStore, export_homework_text
+            if (
+                not callable(getattr(HomeworkAdapter, "load_homework", None))
+                or not callable(validate_homework_url)
+                or not callable(export_homework_text)
+                or not callable(getattr(HomeworkDraftStore, "save_draft", None))
+            ):
+                raise RuntimeError("独立作业草稿与协议模块检查失败")
             channel.send("probe", ocs_ready=True, message="核心、字体资源、题库 v2 参数、图片编码及验证码识别正常",
                          font_entries=len(fonthash_dao.char_map), bank_protocol='v2-text-and-images',
-                         matching_ready=True, captcha_ready=True, review_policy_ready=True, discussion_ready=True, activity_ready=True)
+                         matching_ready=True, captcha_ready=True, review_policy_ready=True, discussion_ready=True, activity_ready=True, exam_ready=True, homework_ready=True)
         elif command.get('action') == 'check_bank':
             load_core(channel)
             from .answers import build_answers
@@ -736,4 +1621,5 @@ def main() -> int:
         channel.send("error", message=f"{type(exc).__name__}: {exc}")
         return 1
     finally:
-        remove_image_cache(channel.image_cache_dir)
+        if command.get('action') not in PAPER_IMAGE_ACTIONS:
+            remove_image_cache(channel.image_cache_dir)

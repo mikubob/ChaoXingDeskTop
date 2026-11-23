@@ -43,7 +43,7 @@ public sealed partial class MainWindow : Window
     private JsonNode? Summary => backend.State["summary"];
     private bool Busy => J.B(Summary, "busy");
     private string Value(string section, string key) => J.S(backend.State["values"]?[section], key);
-    private static readonly string[] Titles = ["课程与账号", "学习设置", "题库与 AI", "高级设置", "任务与日志"];
+    private static readonly string[] Titles = ["课程与账号", "学习设置", "题库与 AI", "高级设置", "任务与日志", "考试"];
 
     public MainWindow()
     {
@@ -159,6 +159,7 @@ public sealed partial class MainWindow : Window
         pages.Add(BuildServices());
         pages.Add(Scroll(Column(BuildAppearance(), BuildGroups("advanced"), BuildBackup())));
         pages.Add(BuildMonitor());
+        pages.Add(BuildExamPage());
         foreach (var page in pages) PageHost.Children.Add(page);
         DispatcherQueue.TryEnqueue(() => AttachInteractionMotion(Root));
         Navigate(Navigation, null!);
@@ -184,7 +185,7 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            if (pages.Count != 5 || fields.Count == 0)
+            if (pages.Count != 6 || fields.Count == 0)
                 throw new InvalidOperationException("原生导航或设置表单未加载。");
             await backend.Call("loadDemo");
             await WaitFor(() => !Busy && showingMyCourses && courses?.Items.Count == demoCourses);
@@ -211,8 +212,69 @@ public sealed partial class MainWindow : Window
             await WaitFor(() => resultLists["questions"].Items.Count == 1);
             SetQuestionScope("");
             await WaitFor(() => resultLists["questions"].Items.Count == demoCourses);
+
+            Navigation.SelectedIndex = 5;
+            await backend.Call("loadExams");
+            await WaitFor(() => !J.B(backend.State["exam"], "busy") && J.A(backend.State["exam"]?["list"]).Count() == 4);
+            var openableExam = J.A(backend.State["exam"]?["list"]).FirstOrDefault(item => J.B(item, "nativeSupported"))
+                ?? throw new InvalidOperationException("演示考试列表中缺少可进入的场次。");
+            string examId = J.S(openableExam, "examId");
+            await backend.Call("openExam", [examId, true]);
+            await WaitFor(() => !J.B(backend.State["exam"], "busy") && J.S(backend.State["exam"]?["current"], "examId") == examId);
+            await backend.Call("requestExamSuggestions", ["all", true, false]);
+            bool repliedExamInput = false;
+            await WaitFor(() =>
+            {
+                if (!repliedExamInput && backend.State["exam"]?["input"] is JsonObject inp && inp.Count > 0)
+                {
+                    repliedExamInput = true;
+                    _ = backend.Call("replyExamInput", ["allow-images", false]);
+                }
+                return !J.B(backend.State["exam"], "busy") && J.I(backend.State["exam"]?["assist"], "completed") == 5;
+            });
+            var firstQuestion = J.A(backend.State["exam"]?["current"]?["questions"]).FirstOrDefault()
+                ?? throw new InvalidOperationException("演示试卷未返回题目。");
+            string firstQid = J.S(firstQuestion, "id");
+            await backend.Call("setExamAnswer", [firstQid, new { option_ids = new[] { "B" } }]);
+            await WaitFor(() => J.B(backend.State["exam"]?["current"], "dirty"));
+            await backend.Call("saveExamDraft", [false]);
+            await WaitFor(() => !J.B(backend.State["exam"]?["current"], "dirty") && J.S(backend.State["exam"]?["current"], "state") == "local_draft");
+            await backend.Call("closeExam", [false]);
+            await WaitFor(() => !showingExamEditor);
+            await backend.Call("openExam", [examId, true]);
+            await WaitFor(() => showingExamEditor && !J.B(backend.State["exam"], "busy"));
+            SelectExamQuestion(4);
+            await WaitFor(() => examQuestionDetailPanel?.Children.OfType<Image>().Any(image =>
+                image.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage { PixelWidth: > 0 }) == true);
+            string attemptId = J.S(backend.State["exam"]?["current"], "attemptId");
+            await backend.Call("submitExam", [examId, attemptId]);
+            await WaitFor(() => !J.B(backend.State["exam"], "busy") && J.S(backend.State["exam"]?["current"], "state") == "simulated_submitted");
+            var finalQuestions = J.A(backend.State["exam"]?["current"]?["questions"]).ToArray();
+            if (J.S(finalQuestions.FirstOrDefault(q => J.S(q, "id") == firstQid), "source") != "manual")
+                throw new InvalidOperationException("考试手动修改的题目未保留 manual 来源。");
+            var examExport = await backend.Call("exportExam");
+            if (examExport?.ToString().Contains("已交卷（模拟）") != true)
+                throw new InvalidOperationException("未能导出已交卷的模拟答卷。");
+
+            await backend.Call("closeExam", [false]);
+            SwitchExamMode(true);
+            await backend.Call("loadHomework", [""]);
+            await WaitFor(() => showingHomeworkEditor && !J.B(backend.State["homework"], "busy"));
+            var homework = backend.State["homework"]?["current"];
+            string homeworkId = J.S(homework, "draftId");
+            if (J.I(homework, "supportedCount") != 5 || J.I(homework, "totalCount") != 6)
+                throw new InvalidOperationException("作业未保留不支持题型的题号。");
+            await backend.Call("setHomeworkAnswer", ["hw-104", new { blanks = new[] { "32", "128" } }]);
+            await backend.Call("saveHomeworkDraft", [false]);
+            await backend.Call("closeHomework", [false]);
+            await backend.Call("openHomeworkDraft", [homeworkId]);
+            await WaitFor(() => showingHomeworkEditor && J.I(backend.State["homework"]?["current"], "answeredCount") == 1);
+            var exported = await backend.Call("exportHomeworkDraft");
+            if (exported?.ToString().Contains("128") != true)
+                throw new InvalidOperationException("作业草稿重新打开后未导出已保存的填空答案。");
+
             success = J.B(Summary, "demo") && J.I(Summary, "success") == demoTasks;
-            message = success ? "WinUI 3 离线读课与任务验收通过。" : "离线任务结果与界面记录不一致。";
+            message = success ? "WinUI 3 离线读课、任务、考试与独立作业验收通过。" : "离线任务结果与界面记录不一致。";
         }
         catch (Exception error) { message = error.Message; }
 
@@ -250,6 +312,8 @@ public sealed partial class MainWindow : Window
                 if (update.ContainsKey(pair.Key)) RefreshRecords(pair.Key, pair.Value);
             if (update.ContainsKey("logs")) SyncLogs();
             if (update.ContainsKey("input")) RefreshInput();
+            if (update.ContainsKey("exam") || update.ContainsKey("examProviders")) RefreshExam();
+            if (update.ContainsKey("homework")) RefreshHomework();
             RefreshCourseNavigation();
         }
         finally { refreshing = false; }
@@ -314,7 +378,11 @@ public sealed partial class MainWindow : Window
             if (status != "confirm") return;
 
             manualDialog?.Hide();
-            var dialog = Dialog("有未保存的设置", Text("放弃并退出会丢失本次未保存的修改。退出时，正在运行的后台任务也会停止。"), "返回编辑");
+            bool submittingExam = J.S(backend.State["exam"], "operation") == "exam_submit";
+            string closeMessage = submittingExam
+                ? "当前考试正在交卷。退出后可在「考试」中核验交卷结果。放弃并退出会丢弃未保存的设置和草稿修改。"
+                : "放弃并退出会丢弃未保存的设置、考试答卷和作业草稿修改。退出会停止正在运行的后台任务。";
+            var dialog = Dialog("确认退出", Text(closeMessage), "返回工作台");
             dialog.PrimaryButtonText = "保存并退出";
             dialog.SecondaryButtonText = "放弃并退出";
             var result = await ShowModal(dialog);

@@ -748,22 +748,26 @@ public sealed partial class MainWindow
         ["task_status"] = "任务点状态", ["submit_status"] = "提交状态", ["evidence"] = "平台证据", ["next"] = "下一步",
     };
 
-    private async Task ShowProfiles()
+    private async Task ShowProfiles(string defaultTarget = "ai")
     {
         var items = J.A(await Call("listAiProfiles"));
         var name = new TextBox { Text = "默认档案", Header = "档案名称（必填，最多 40 字符）", MaxLength = 40 };
+        var targetItems = new[] { new ChoiceItem("刷课 AI 设置", "ai"), new ChoiceItem("考试 AI 设置", "exam_ai") };
+        var targetSelect = new ComboBox { Header = "保存来源 / 加载目标", ItemsSource = targetItems, DisplayMemberPath = "Label" };
+        targetSelect.SelectedItem = targetItems.FirstOrDefault(t => t.Value == defaultTarget) ?? targetItems[0];
         var select = new ComboBox { Header = "已保存的档案", PlaceholderText = "暂无档案", DisplayMemberPath = "Label" };
         var notice = new InfoBar { IsOpen = false, IsClosable = false };
-        var panel = Column(Text("档案包含服务配置与凭据，保存在本机并加密。", 12, true), name, select, notice);
+        var panel = Column(Text("档案包含服务配置与凭据，保存在本机并加密。", 12, true), targetSelect, name, select, notice);
         var dialog = Dialog("AI 档案", Scroll(panel));
         dialog.PrimaryButtonText = "保存为档案";
         dialog.SecondaryButtonText = "加载所选档案";
+        string CurrentTarget() => (targetSelect.SelectedItem as ChoiceItem)?.Value ?? "ai";
         var delete = Button("删除所选档案…", async () =>
         {
             if (select.SelectedItem is not ChoiceItem item) return;
             dialog.Hide();
             if (await Confirm("删除 AI 档案？", "将删除「" + item.Label + "」的本机加密档案，无法撤销。", "删除此档案"))
-                await Call("aiProfileAction", "delete", item.Value);
+                await Call("aiProfileAction", "delete", item.Value, CurrentTarget());
         });
         panel.Children.Add(delete);
         void Report(bool ok, string message)
@@ -778,7 +782,7 @@ public sealed partial class MainWindow
             var deferral = args.GetDeferral();
             try
             {
-                bool ok = (await Call("aiProfileAction", "save", name.Text))?.ToString() == "true";
+                bool ok = (await Call("aiProfileAction", "save", name.Text, CurrentTarget()))?.ToString() == "true";
                 Report(ok, ok ? "档案已保存。" : "保存档案失败，请检查名称和 AI 设置。");
                 if (ok) LoadChoices(J.A(await Call("listAiProfiles")));
             }
@@ -791,8 +795,10 @@ public sealed partial class MainWindow
             var deferral = args.GetDeferral();
             try
             {
-                bool ok = (await Call("aiProfileAction", "load", item.Value))?.ToString() == "true";
-                Report(ok, ok ? $"已加载「{item.Label}」的 AI 设置。" : $"无法加载「{item.Label}」的 AI 设置。");
+                string target = CurrentTarget();
+                bool ok = (await Call("aiProfileAction", "load", item.Value, target))?.ToString() == "true";
+                string targetLabel = target == "exam_ai" ? "考试 AI" : "刷课 AI";
+                Report(ok, ok ? $"已加载「{item.Label}」到{targetLabel}设置。" : $"无法加载「{item.Label}」的 AI 设置。");
             }
             finally { deferral.Complete(); }
         };

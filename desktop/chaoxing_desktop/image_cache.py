@@ -17,6 +17,13 @@ def profile_image_cache(profile):
     return image_cache_root() / hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]
 
 
+PAPER_IMAGE_ACTIONS = ('exam_open', 'homework_load')
+
+
+def paper_image_cache(profile):
+    return profile_image_cache(profile) / 'papers'
+
+
 def remove_image_cache(directory):
     if directory is None:
         return

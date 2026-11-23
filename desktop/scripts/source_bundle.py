@@ -13,7 +13,11 @@ def source_files(desktop: Path):
         "scripts/retired-runtime-0.6.5.txt",
         "tests/test_ai_resilience.py",
         "tests/test_decode_choices.py",
+        "tests/test_exam_config.py",
+        "tests/test_exam_drafts.py",
+        "tests/test_exam_protocol.py",
         "tests/test_formula_images.py",
+        "tests/test_homework_drafts.py",
         "tests/test_ordered_chapters.py",
         "tests/test_winui_bridge.py",
         # Public compile input: ChaoxingDesktop.csproj uses it as ApplicationIcon
@@ -32,6 +36,8 @@ def source_files(desktop: Path):
         ("chaoxing_desktop", {".py"}),
         ("scripts", {".py", ".ps1", ".nsi"}),
         ("assets", {".svg"}),
+        ("tests/fixtures/exam", {".html"}),
+        ("tests/fixtures/homework", {".html"}),
         ("vendor/chaoxing/api", {".py", ".md"}),
     ):
         for path in (desktop / directory).rglob("*"):
@@ -55,6 +61,9 @@ def repository_source_files(root: Path):
 
 
 def write_source_archive(root: Path, destination: Path):
-    with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(destination, 'w') as archive:
         for path in repository_source_files(root):
-            archive.write(path, 'ChaoxingDesktop-source/' + path.relative_to(root).as_posix())
+            # 固定 ZIP 条目元数据，避免沿用本机文件时间和权限。
+            entry = zipfile.ZipInfo('ChaoxingDesktop-source/' + path.relative_to(root).as_posix())
+            entry.create_system = 0
+            archive.writestr(entry, path.read_bytes(), zipfile.ZIP_DEFLATED, compresslevel=6)

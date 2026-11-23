@@ -154,3 +154,34 @@ SCHEMA['bank_declarative'] = [group('声明式 JSON 题库', '仅支持字段模
     field('请求超时 / 秒', 'question_bank', 'declarative_timeout', 'integer', 5, 300),
     field('失败重试次数', 'question_bank', 'declarative_retries', 'integer', 0, 5),
 ])]
+SCHEMA['exam_service'] = [group('考试答题服务', '参考答案只填入本机答卷并标注来源；保存和交卷仍需手动确认。', [
+    field('在考试页显示获取参考答案', 'exam', 'assist_enabled', 'bool',
+          hint='开启后在考试和独立作业草稿页显示「获取参考答案」入口。考试不使用随机补全，不自动交卷。'),
+    field('考试 AI 模型', 'exam', 'ai_source', 'choice',
+          choices=[('复用刷课设置（默认）', 'shared'), ('单独配置', 'custom')],
+          hint='单独配置时使用下方独立的模型、API Key 与请求上限，与刷课 AI 互不影响。'),
+    field('考试题库', 'exam', 'bank_source', 'choice',
+          choices=[('复用刷课设置（默认）', 'shared'), ('单独配置', 'custom')],
+          hint='单独配置时使用下方独立的题库启用顺序与 Token，与刷课题库互不影响。'),
+])]
+
+
+def _clone_groups(groups, source_section, target_section):
+    """复制表单分组并将字段与依赖项的 section 改写为考试独立配置节。"""
+    cloned = []
+    for item in groups:
+        fields = []
+        for spec in item['fields']:
+            copied = dict(spec, choices=[dict(c) for c in spec['choices']], depends=dict(spec['depends']))
+            if copied['section'] == source_section:
+                copied['section'] = target_section
+            if copied['depends'].get('section') == source_section:
+                copied['depends']['section'] = target_section
+            fields.append(copied)
+        cloned.append(group(item['title'], item['description'], fields))
+    return cloned
+
+
+SCHEMA['exam_ai'] = _clone_groups(SCHEMA['ai'], 'ai', 'exam_ai')
+for _bank_key in ('bank_go', 'bank_yanxi', 'bank_like', 'bank_adapter', 'bank_declarative'):
+    SCHEMA['exam_' + _bank_key] = _clone_groups(SCHEMA[_bank_key], 'question_bank', 'exam_question_bank')

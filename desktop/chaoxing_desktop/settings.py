@@ -14,6 +14,8 @@ STORED_SECRETS = {
     "ai": ("key", "http_proxy"),
     "notification": ("url", "tg_chat_id"),
 }
+STORED_SECRETS["exam_ai"] = STORED_SECRETS["ai"]
+STORED_SECRETS["exam_question_bank"] = STORED_SECRETS["question_bank"]
 
 
 def _service_credentials(config):

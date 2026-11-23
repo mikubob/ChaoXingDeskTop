@@ -402,7 +402,7 @@ public sealed partial class MainWindow
         refreshers.Add(() => { int position = 1; foreach (var p in J.A(backend.State["providers"])) { var expander = bankExpanders[J.S(p, "key")]; if (bankStack.Children.IndexOf(expander) != position) { bankStack.Children.Remove(expander); bankStack.Children.Insert(position, expander); } position++; } });
         var aiHealth = Text("尚未测试连接", 12, true);
         refreshers.Add(() => aiHealth.Text = J.S(backend.State["serviceHealth"], "ai") + "\n" + J.S(backend.State, "aiWarning"));
-        var profileButton = Button("管理 AI 档案…", () => { EnqueueDialog(ShowProfiles); return Task.CompletedTask; }, true);
+        var profileButton = Button("管理 AI 档案…", () => { EnqueueDialog(() => ShowProfiles("ai")); return Task.CompletedTask; }, true);
         var aiFooter = Column(Button("测试 AI 连接…", async () => { if (await Confirm("主动测试 AI 服务", "将向当前配置的 AI 服务发送“回复 OK”，可能消耗额度。", "发送测试请求")) await Call("checkAi"); }, true, "#7C3AED"), aiHealth);
         var ai = BuildGroups("ai", profileButton, aiFooter);
         var serviceGrid = new Grid { Name = "ServiceColumns", ColumnSpacing = 16, RowSpacing = 20, ChildrenTransitions = LayoutTransitions() };
@@ -448,16 +448,164 @@ public sealed partial class MainWindow
                 else ScrollTo(showAi ? aiScroll : banksScroll, 0);
             });
         }
-        var tabs = Tabs(("服务连接", servicesScroll), ("答案处理", Scroll(BuildGroups("answers"))), ("结束通知", Scroll(BuildGroups("notification"))), ("讨论任务", PreviewSettings("discussion")), ("投票／问卷", PreviewSettings("activity")));
-        var selector = (Pivot)tabs.Children[0]; selector.Margin = new Thickness(-12, 0, 110, 8);
+        var examBankExpanders = new Dictionary<string, Expander>();
+        var examBankMap = new Dictionary<string, string>
+        {
+            ["TikuGo"] = "exam_bank_go",
+            ["TikuYanxi"] = "exam_bank_yanxi",
+            ["TikuLike"] = "exam_bank_like",
+            ["TikuAdapter"] = "exam_bank_adapter",
+            ["TikuDeclarative"] = "exam_bank_declarative",
+        };
+        UIElement BuildExamServices(Action<int, bool> navigateToService)
+        {
+            var examAiHealth = Text("尚未测试连接", 12, true);
+            refreshers.Add(() => examAiHealth.Text = J.S(backend.State["serviceHealth"], "exam_ai"));
+            var examAiActions = Row(
+                Button("从刷课设置复制", async () => await Call("copyExamServiceConfig", "ai"), true),
+                Button("管理 AI 档案…", () => { EnqueueDialog(() => ShowProfiles("exam_ai")); return Task.CompletedTask; }, true)
+            );
+            var examAiFooter = Column(
+                Button("测试 AI 连接…", async () =>
+                {
+                    if (await Confirm("主动测试考试 AI 服务", "将向当前单独配置的考试 AI 服务发送“回复 OK”，可能消耗额度。", "发送测试请求"))
+                        await Call("checkAi", "exam_ai");
+                }, true, "#7C3AED"),
+                examAiHealth
+            );
+            var examAiCustom = BuildGroups("exam_ai", examAiActions, examAiFooter);
+
+            var examAiSharedSummary = Text("", 13, true);
+            var examAiShared = Card(Column(
+                Text("考试 AI 模型（复用刷课设置）", 16),
+                examAiSharedSummary,
+                Button("前往服务连接", () => { navigateToService(0, true); return Task.CompletedTask; })
+            ));
+
+            var examBankStack = Column(StretchRow(
+                Text("考试题库服务", 18),
+                Button("从刷课设置复制", async () => await Call("copyExamServiceConfig", "bank"), true)
+            ));
+            foreach (var provider in J.A(backend.State["examProviders"]))
+            {
+                string key = J.S(provider, "key"), title = J.S(provider, "title"), secret = J.S(provider, "secret");
+                var enabled = new ToggleSwitch { Header = title, IsOn = J.B(provider, "enabled") };
+                idleControls.Add(enabled);
+                enabled.Toggled += async (_, _) => { if (!refreshing) await Call("toggleProvider", key, enabled.IsOn, "exam_question_bank"); };
+                var health = Text(J.S(backend.State["serviceHealth"], "exam_" + key), 12, true);
+                refreshers.Add(() =>
+                {
+                    var row = J.A(backend.State["examProviders"]).FirstOrDefault(n => J.S(n, "key") == key);
+                    enabled.IsOn = J.B(row, "enabled");
+                    health.Text = J.S(backend.State["serviceHealth"], "exam_" + key);
+                });
+                var up = Button("上移", async () => await Call("moveProvider", J.A(backend.State["examProviders"]).Select(n => J.S(n, "key")).ToList().IndexOf(key), -1, "exam_question_bank"), true);
+                var down = Button("下移", async () => await Call("moveProvider", J.A(backend.State["examProviders"]).Select(n => J.S(n, "key")).ToList().IndexOf(key), 1, "exam_question_bank"), true);
+                AutomationProperties.SetName(up, $"上移考试{title}");
+                AutomationProperties.SetName(down, $"下移考试{title}");
+                var content = Column(
+                    BoundPassword("服务凭据", "exam_question_bank", secret),
+                    BuildGroups(examBankMap[key], showHeading: false),
+                    Button("真实连接检查…", async () =>
+                    {
+                        if (await Confirm("真实服务连接检查", "将向考试题库「" + title + "」发送一道最小测试题，可能消耗服务额度。", "发送测试题"))
+                            await Call("checkBank", key, "exam_question_bank");
+                    }, true, "#7C3AED")
+                );
+                fieldGroups["exam_question_bank." + secret] = examBankMap[key];
+                if (key == "TikuDeclarative")
+                    content.Children.Add(Row(
+                        Button("导入 JSON", () => FileAction("definitionAction", ["import", "exam_question_bank"], false, "json"), true),
+                        Button("导出模板", () => FileAction("definitionAction", ["export", "exam_question_bank"], true, "json", "exam-question-bank"), true)
+                    ));
+                var header = Column(StretchRow(enabled, Row(up, down)), health);
+                header.Margin = new Thickness(0, 14, 0, 14);
+                header.Spacing = 14;
+                var expander = new Expander
+                {
+                    Header = header,
+                    Content = new Border { Padding = new Thickness(20, 16, 20, 20), Child = content },
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                };
+                AutomationProperties.SetName(expander, "考试" + title + "设置");
+                examBankExpanders.Add(key, expander);
+                examBankStack.Children.Add(expander);
+            }
+            refreshers.Add(() =>
+            {
+                int position = 1;
+                foreach (var p in J.A(backend.State["examProviders"]))
+                {
+                    var expander = examBankExpanders[J.S(p, "key")];
+                    if (examBankStack.Children.IndexOf(expander) != position)
+                    {
+                        examBankStack.Children.Remove(expander);
+                        examBankStack.Children.Insert(position, expander);
+                    }
+                    position++;
+                }
+            });
+            var examBankCustom = Card(examBankStack);
+
+            var examBankSharedSummary = Text("", 13, true);
+            var examBankShared = Card(Column(
+                Text("考试题库（复用刷课设置）", 16),
+                examBankSharedSummary,
+                Button("前往服务连接", () => { navigateToService(0, false); return Task.CompletedTask; })
+            ));
+
+            refreshers.Add(() =>
+            {
+                bool customAi = Value("exam", "ai_source").Equals("custom", StringComparison.OrdinalIgnoreCase);
+                bool customBank = Value("exam", "bank_source").Equals("custom", StringComparison.OrdinalIgnoreCase);
+                examAiCustom.Visibility = customAi ? Visibility.Visible : Visibility.Collapsed;
+                examAiShared.Visibility = customAi ? Visibility.Collapsed : Visibility.Visible;
+                examBankCustom.Visibility = customBank ? Visibility.Visible : Visibility.Collapsed;
+                examBankShared.Visibility = customBank ? Visibility.Collapsed : Visibility.Visible;
+                var assist = backend.State["exam"]?["assist"];
+                examAiSharedSummary.Text = "当前生效 AI：" + J.S(assist, "aiSummary", J.S(backend.State, "aiDestination"));
+                examBankSharedSummary.Text = "当前生效题库：" + J.S(assist, "bankSummary", "沿用刷课已启用题库");
+            });
+
+            return Scroll(Column(BuildGroups("exam_service"), examAiShared, examAiCustom, examBankShared, examBankCustom));
+        }
+
+        Pivot? serviceSelector = null;
+        var examServicesTab = BuildExamServices((tabIdx, showAi) =>
+        {
+            if (serviceSelector != null) serviceSelector.SelectedIndex = tabIdx;
+            RevealService(showAi);
+        });
+        var tabs = Tabs(("服务连接", servicesScroll), ("答案处理", Scroll(BuildGroups("answers"))), ("结束通知", Scroll(BuildGroups("notification"))), ("讨论任务", PreviewSettings("discussion")), ("投票／问卷", PreviewSettings("activity")), ("考试答题", examServicesTab));
+        var selector = (Pivot)tabs.Children[0];
+        serviceSelector = selector;
+        selector.Margin = new Thickness(-12, 0, 110, 8);
         Button? aiSwitch = null;
         aiSwitch = Button("AI 设置", () => { RevealService(!aiSelected); aiSwitch!.Content = aiSelected ? "题库列表" : "AI 设置"; return Task.CompletedTask; });
         aiSwitch.HorizontalAlignment = HorizontalAlignment.Right; aiSwitch.VerticalAlignment = VerticalAlignment.Center; tabs.Children.Add(aiSwitch);
         revealServiceGroup = group =>
         {
-            selector.SelectedIndex = group switch { "answers" => 1, "notification" => 2, "discussion" => 3, "activity" => 4, _ => 0 };
-            RevealService(group == "ai"); aiSwitch.Content = aiSelected ? "题库列表" : "AI 设置";
-            foreach (var bank in bankExpanders) if (bankMap[bank.Key] == group) bank.Value.IsExpanded = true;
+            selector.SelectedIndex = group switch
+            {
+                "answers" => 1,
+                "notification" => 2,
+                "discussion" => 3,
+                "activity" => 4,
+                "exam_service" or "exam_ai" => 5,
+                _ when group.StartsWith("exam_bank_", StringComparison.Ordinal) => 5,
+                _ => 0,
+            };
+            if (selector.SelectedIndex == 0)
+            {
+                RevealService(group == "ai");
+                aiSwitch.Content = aiSelected ? "题库列表" : "AI 设置";
+                foreach (var bank in bankExpanders) if (bankMap[bank.Key] == group) bank.Value.IsExpanded = true;
+            }
+            else if (selector.SelectedIndex == 5)
+            {
+                foreach (var bank in examBankExpanders) if (examBankMap[bank.Key] == group) bank.Value.IsExpanded = true;
+            }
         };
         selector.SelectionChanged += (_, _) => aiSwitch.Visibility = selector.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         return tabs;

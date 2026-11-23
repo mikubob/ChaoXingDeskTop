@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>考试</title></head>
+<body>
+<div class="topicNumber" id="topicNumberScroll">
+  <ul class="topicNumber_list clearfix">
+    <li class="current" data-asq="800001" onclick="getTheQuestionByStart(0, '0');">1</li>
+    <li class="" data-asq="800002" onclick="getTheQuestionByStart(1, '0');">2</li>
+  </ul>
+</div>
+<form id="submitTest" action="/exam-ans/exam/test/reVersionSubmitTestNew?classId=200001&courseId=100001&testPaperId=400001&testUserRelationId=500001" method="post">
+  <input type="hidden" id="courseId" name="courseId" value="100001"/>
+  <input type="hidden" id="classId" name="classId" value="200001"/>
+  <input type="hidden" id="paperId" name="paperId" value="600001"/>
+  <input type="hidden" id="testPaperId" name="testPaperId" value="400001"/>
+  <input type="hidden" id="testUserRelationId" name="testUserRelationId" value="500001"/>
+  <input type="hidden" id="cpi" name="cpi" value="300001"/>
+  <input type="hidden" id="openc" name="openc" value="ffffffffffffffffffffffffffffffff"/>
+  <input type="hidden" id="enc" name="enc" value="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"/>
+  <input type="hidden" id="saveUrl" name="saveUrl" value="/exam-ans/exam/test/reVersionSubmitTestNew"/>
+  <input type="hidden" id="remainTime" name="remainTime" value="3500"/>
+  <input type="hidden" id="enterPageTime" name="enterPageTime" value="1795400000000"/>
+  <input type="hidden" id="limitTime" name="limitTime" value="60"/>
+  <input type="hidden" id="tempSave" name="tempSave" value="false"/>
+  <input type="hidden" id="switchScreenControl" name="switchScreenControl" value="0"/>
+  <input type="hidden" id="snapshotMonitor" name="snapshotMonitor" value="0"/>
+  <input type="hidden" id="webSnapshotMonitor" name="webSnapshotMonitor" value="0"/>
+  <input type="hidden" id="electronSnapshotMonitor" name="electronSnapshotMonitor" value="0"/>
+  <input type="hidden" id="isChaoxingExamPc" name="isChaoxingExamPc" value=""/>
+  <input type="hidden" id="liveMonitor" name="liveMonitor" value="0"/>
+  <input type="hidden" id="limitTimeType" name="limitTimeType" value="0"/>
+  <input type="hidden" id="groupLimitTimeType" name="groupLimitTimeType" value="0"/>
+  <input type="hidden" id="questionId" name="questionId" value="800001"/>
+  <input type="hidden" id="type" name="type" value="0"/>
+  <input type="hidden" name="start" value="0"/>
+
+  <div class="whiteDiv questionLi singleQuesId" data="800001">
+    <h3 class="mark_name">1. <span class="colorShallow">(单选题, 5.0 分)</span><div><p>1+1等于？</p></div></h3>
+    <div class="stem_answer">
+      <div class="clearfix answerBg singleoption" role="radio"><span class="addChoice choice800001" data="A" qid="800001">A</span><div class="answer_p">1</div></div>
+      <div class="clearfix answerBg singleoption" role="radio"><span class="addChoice choice800001" data="B" qid="800001">B</span><div class="answer_p">2</div></div>
+      <div class="clearfix answerBg singleoption" role="radio"><span class="addChoice choice800001" data="C" qid="800001">C</span><div class="answer_p">3</div></div>
+    </div>
+    <input type="hidden" name="type800001" value="0"/>
+    <input type="hidden" id="answer800001" name="answer800001" value="B"/>
+  </div>
+</form>
+</body>
+</html>
