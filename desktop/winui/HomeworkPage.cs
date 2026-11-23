@@ -18,7 +18,9 @@ public sealed partial class MainWindow
 
     // 独立作业列表视图
     private TextBox? hwUrlInput;
-    private ComboBox? hwCourseCombo;
+    private Expander? hwCourseExpander;
+    private StackPanel? hwCourseChecklistPanel;
+    private readonly List<CheckBox> hwCourseChecks = [];
     private Button? hwLoadButton, hwFetchListButton;
     private InfoBar? hwListNotice;
     private TextBlock? hwEmptyText, hwDraftsHeader, hwRemoteHeader;
@@ -50,9 +52,24 @@ public sealed partial class MainWindow
         };
         AutomationProperties.SetName(hwUrlInput, "独立作业链接");
         hwLoadButton = Button("读取作业", async () => await Call("loadHomework", hwUrlInput.Text), color: "#2563EB");
-        hwCourseCombo = new ComboBox { MinWidth = 220, MaxWidth = 340 };
-        AutomationProperties.SetName(hwCourseCombo, "选择课程");
-        hwFetchListButton = Button("读取课程作业", async () => await Call("loadHomeworks", SelectedCourseKey(hwCourseCombo)));
+        hwFetchListButton = Button("读取课程作业", async () =>
+        {
+            var selectedCourses = SelectedCourseKeys(hwCourseChecks);
+            if (selectedCourses.Count == 0)
+            {
+                if (hwCourseExpander != null && hwCourseChecks.Count > 0) hwCourseExpander.IsExpanded = true;
+                if (hwListNotice != null)
+                {
+                    hwListNotice.Message = hwCourseChecks.Count == 0
+                        ? "请先在「课程与账号」读取课程。"
+                        : "请勾选至少 1 门课程，再点击「读取课程作业」。";
+                    hwListNotice.Severity = InfoBarSeverity.Warning;
+                    hwListNotice.IsOpen = true;
+                }
+                return;
+            }
+            await Call("loadHomeworks", string.Join(",", selectedCourses));
+        });
 
         var urlGrid = new Grid { ColumnSpacing = 10 };
         urlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -61,8 +78,14 @@ public sealed partial class MainWindow
         urlGrid.Children.Add(hwLoadButton);
         Grid.SetColumn(hwLoadButton, 1);
 
-        var courseRow = StretchRow(Text("按课程读取作业列表，或直接粘贴上方作业链接：", 13, true), Row(hwCourseCombo, hwFetchListButton));
-        var topControls = Column(urlGrid, courseRow);
+        (hwCourseExpander, hwCourseChecklistPanel) = BuildCourseChecklistExpander(hwCourseChecks, "选择要读取作业的课程");
+        var courseGrid = new Grid { ColumnSpacing = 10 };
+        courseGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        courseGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        courseGrid.Children.Add(hwCourseExpander);
+        courseGrid.Children.Add(hwFetchListButton);
+        Grid.SetColumn(hwFetchListButton, 1);
+        var topControls = Column(urlGrid, courseGrid);
         topControls.Spacing = 8;
 
         hwListNotice = new InfoBar { IsOpen = false, IsClosable = false };
@@ -238,8 +261,8 @@ public sealed partial class MainWindow
         if (homeworkHost == null) return;
         var hw = backend.State["homework"] as JsonObject ?? new JsonObject();
         bool busy = J.B(hw, "busy");
-        SyncCourseCombo(hwCourseCombo, ref hwCourseSignature);
-        if (hwCourseCombo != null) hwCourseCombo.IsEnabled = !busy;
+        SyncCourseChecklist(hwCourseExpander, hwCourseChecklistPanel, hwCourseChecks, ref hwCourseSignature, "选择要读取作业的课程");
+        if (hwCourseExpander != null) hwCourseExpander.IsEnabled = !busy;
         if (hwLoadButton != null) hwLoadButton.IsEnabled = !busy;
         if (hwFetchListButton != null) hwFetchListButton.IsEnabled = !busy;
 

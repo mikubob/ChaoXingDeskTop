@@ -17,7 +17,9 @@ public sealed partial class MainWindow
     // 考试列表视图控件
     private TextBlock? examAccountLabel, examEmptyText;
     private InfoBar? examListNotice;
-    private ComboBox? examCourseCombo;
+    private Expander? examCourseExpander;
+    private StackPanel? examCourseChecklistPanel;
+    private readonly List<CheckBox> examCourseChecks = [];
     private Button? examRefreshButton;
     private StackPanel? examListContainer;
     private string examCourseSignature = "";
@@ -50,10 +52,28 @@ public sealed partial class MainWindow
     {
         // 所有考试页控件都不加入 idleControls，保证刷课运行时仍可独立操作考试。
         examAccountLabel = Text("当前账号：尚未选择", 13, true);
-        examCourseCombo = new ComboBox { MinWidth = 220, MaxWidth = 340 };
-        AutomationProperties.SetName(examCourseCombo, "选择课程");
-        examRefreshButton = Button("读取考试", async () => await Call("loadExams", SelectedCourseKey(examCourseCombo)), color: "#2563EB");
-        var listHeader = StretchRow(examAccountLabel, Row(examCourseCombo, examRefreshButton));
+        examRefreshButton = Button("读取考试", async () =>
+        {
+            var selectedCourses = SelectedCourseKeys(examCourseChecks);
+            if (selectedCourses.Count == 0)
+            {
+                if (examCourseExpander != null && examCourseChecks.Count > 0) examCourseExpander.IsExpanded = true;
+                if (examListNotice != null)
+                {
+                    examListNotice.Message = examCourseChecks.Count == 0
+                        ? "请先在「课程与账号」读取课程。"
+                        : "请勾选至少 1 门课程，再点击「读取考试」。";
+                    examListNotice.Severity = InfoBarSeverity.Warning;
+                    examListNotice.IsOpen = true;
+                }
+                return;
+            }
+            await Call("loadExams", string.Join(",", selectedCourses));
+        }, color: "#2563EB");
+        var headerRow = StretchRow(examAccountLabel, examRefreshButton);
+        (examCourseExpander, examCourseChecklistPanel) = BuildCourseChecklistExpander(examCourseChecks, "选择要读取考试的课程");
+        var listHeader = Column(headerRow, examCourseExpander);
+        listHeader.Spacing = 8;
 
         examListNotice = new InfoBar { IsOpen = false, IsClosable = false };
         examListContainer = Column();
@@ -240,41 +260,97 @@ public sealed partial class MainWindow
         SwitchContent(examHost, examViews, showEditor ? 1 : 0, showEditor ? -distance : distance, animate);
     }
 
-    private void SyncCourseCombo(ComboBox? combo, ref string lastSignature)
+    private (Expander, StackPanel) BuildCourseChecklistExpander(List<CheckBox> checks, string emptyHeader)
     {
-        if (combo == null) return;
+        var listPanel = Column();
+        listPanel.Spacing = 4;
+        var expander = new Expander
+        {
+            Header = emptyHeader,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsExpanded = false,
+        };
+        var selectAllBtn = Button("全选", () =>
+        {
+            foreach (var cb in checks) cb.IsChecked = true;
+            UpdateCourseChecklistHeader(expander, checks, emptyHeader);
+            return Task.CompletedTask;
+        });
+        var clearBtn = Button("取消选择", () =>
+        {
+            foreach (var cb in checks) cb.IsChecked = false;
+            UpdateCourseChecklistHeader(expander, checks, emptyHeader);
+            return Task.CompletedTask;
+        });
+        var scroller = Scroll(listPanel);
+        scroller.MaxHeight = 200;
+        var content = Column(Row(selectAllBtn, clearBtn), scroller);
+        content.Spacing = 8;
+        expander.Content = content;
+        return (expander, listPanel);
+    }
+
+    private static void UpdateCourseChecklistHeader(Expander? expander, List<CheckBox> checks, string emptyHeader)
+    {
+        if (expander == null) return;
+        if (checks.Count == 0)
+        {
+            expander.Header = $"{emptyHeader}（尚未读取课程）";
+            return;
+        }
+        int selected = checks.Count(c => c.IsChecked == true);
+        expander.Header = $"{emptyHeader}（已选 {selected} / {checks.Count} 门）";
+    }
+
+    private void SyncCourseChecklist(Expander? expander, StackPanel? panel, List<CheckBox> checks, ref string lastSignature, string emptyHeader)
+    {
+        if (expander == null || panel == null) return;
         var courses = J.A(backend.State["courseChoices"]).OfType<JsonObject>().ToList();
         string sig = string.Join("|", courses.Select(c => $"{J.S(c, "courseId")}:{J.S(c, "clazzId")}:{J.S(c, "title")}"));
-        if (sig == lastSignature && combo.Items.Count > 0) return;
-        lastSignature = sig;
-        string prevKey = SelectedCourseKey(combo);
-        bool keepAllCourses = combo.Items.Count > 1 && combo.SelectedItem is ComboBoxItem && prevKey.Length == 0;
-        combo.Items.Clear();
-        int restoreIdx = -1;
-        for (int i = 0; i < courses.Count; i++)
+        if (sig == lastSignature && checks.Count == courses.Count)
         {
-            var c = courses[i];
+            UpdateCourseChecklistHeader(expander, checks, emptyHeader);
+            return;
+        }
+        bool hadPrevious = lastSignature.Length > 0;
+        lastSignature = sig;
+        var prevSelected = SelectedCourseKeys(checks).ToHashSet();
+        checks.Clear();
+        panel.Children.Clear();
+        bool isDemo = J.B(Summary, "demo");
+        foreach (var c in courses)
+        {
             string cid = J.S(c, "courseId");
             string clazzId = J.S(c, "clazzId");
             string title = J.S(c, "title");
             string key = $"{cid}:{clazzId}";
-            combo.Items.Add(new ComboBoxItem { Content = string.IsNullOrWhiteSpace(title) ? cid : title, Tag = key });
-            if (key == prevKey) restoreIdx = i;
+            bool isChecked = hadPrevious
+                ? prevSelected.Contains(key)
+                : (J.B(c, "selected") || isDemo);
+            var cb = new CheckBox
+            {
+                Content = string.IsNullOrWhiteSpace(title) ? cid : title,
+                Tag = key,
+                IsChecked = isChecked,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+            AutomationProperties.SetName(cb, $"选择课程 {cb.Content}");
+            cb.Checked += (_, _) => UpdateCourseChecklistHeader(expander, checks, emptyHeader);
+            cb.Unchecked += (_, _) => UpdateCourseChecklistHeader(expander, checks, emptyHeader);
+            checks.Add(cb);
+            panel.Children.Add(cb);
         }
-        combo.Items.Add(new ComboBoxItem { Content = "全部课程（较慢，易触发限流）", Tag = "" });
-        if (keepAllCourses)
-            restoreIdx = combo.Items.Count - 1;
-        if (restoreIdx >= 0)
-            combo.SelectedIndex = restoreIdx;
-        else
-            combo.SelectedIndex = 0;
+        UpdateCourseChecklistHeader(expander, checks, emptyHeader);
     }
 
-    private static string SelectedCourseKey(ComboBox? combo)
+    private static List<string> SelectedCourseKeys(List<CheckBox> checks)
     {
-        if (combo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
-            return tag;
-        return "";
+        var keys = new List<string>();
+        foreach (var cb in checks)
+            if (cb.IsChecked == true && cb.Tag is string key && !string.IsNullOrWhiteSpace(key))
+                keys.Add(key);
+        return keys;
     }
 
     private void RefreshExam()
@@ -282,8 +358,8 @@ public sealed partial class MainWindow
         if (examHost == null) return;
         var exam = backend.State["exam"] as JsonObject ?? new JsonObject();
         bool busy = J.B(exam, "busy");
-        SyncCourseCombo(examCourseCombo, ref examCourseSignature);
-        if (examCourseCombo != null) examCourseCombo.IsEnabled = !busy;
+        SyncCourseChecklist(examCourseExpander, examCourseChecklistPanel, examCourseChecks, ref examCourseSignature, "选择要读取考试的课程");
+        if (examCourseExpander != null) examCourseExpander.IsEnabled = !busy;
         if (examRefreshButton != null) examRefreshButton.IsEnabled = !busy;
 
         if (examAccountLabel != null)

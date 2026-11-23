@@ -214,15 +214,15 @@ public sealed partial class MainWindow : Window
             await WaitFor(() => resultLists["questions"].Items.Count == demoCourses);
 
             Navigation.SelectedIndex = 5;
-            await WaitFor(() => examCourseCombo?.Items.Count == demoCourses + 1);
-            if (SelectedCourseKey(examCourseCombo).Length == 0)
-                throw new InvalidOperationException("读取演示课程后未默认选择单门课程。");
-            examCourseCombo!.SelectedIndex = 1;
-            string examCourseKey = SelectedCourseKey(examCourseCombo);
-            await backend.Call("loadExams", [examCourseKey]);
+            await WaitFor(() => examCourseChecks.Count == demoCourses);
+            examCourseChecks[0].IsChecked = false;
+            var examCourseKeys = SelectedCourseKeys(examCourseChecks);
+            if (examCourseKeys.Count != 2)
+                throw new InvalidOperationException("演示考试未能勾选两门课程。");
+            await backend.Call("loadExams", [string.Join(",", examCourseKeys)]);
             await WaitFor(() => !J.B(backend.State["exam"], "busy") &&
-                J.A(backend.State["exam"]?["list"]).SingleOrDefault() is JsonObject listedExam &&
-                $"{J.S(listedExam, "courseId")}:{J.S(listedExam, "clazzId")}" == examCourseKey);
+                examCourseKeys.ToHashSet().SetEquals(J.A(backend.State["exam"]?["list"])
+                    .Select(item => $"{J.S(item, "courseId")}:{J.S(item, "clazzId")}")));
             await backend.Call("loadExams");
             await WaitFor(() => !J.B(backend.State["exam"], "busy") && J.A(backend.State["exam"]?["list"]).Count() == 4);
             var openableExam = J.A(backend.State["exam"]?["list"]).FirstOrDefault(item => J.B(item, "nativeSupported"))
@@ -267,9 +267,8 @@ public sealed partial class MainWindow : Window
 
             await backend.Call("closeExam", [false]);
             SwitchExamMode(true);
-            await WaitFor(() => hwCourseCombo?.Items.Count == demoCourses + 1);
-            hwCourseCombo!.SelectedIndex = 0;
-            string homeworkCourseKey = SelectedCourseKey(hwCourseCombo);
+            await WaitFor(() => hwCourseChecks.Count == demoCourses);
+            string homeworkCourseKey = (hwCourseChecks[0].Tag as string) ?? "";
             await backend.Call("loadHomeworks", [homeworkCourseKey]);
             await WaitFor(() => !J.B(backend.State["homework"], "busy") &&
                 J.A(backend.State["homework"]?["list"]).Count() == 2 &&

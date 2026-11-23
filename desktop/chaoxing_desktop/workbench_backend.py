@@ -2571,26 +2571,45 @@ class WorkbenchBackend(QObject):
         self._exam_controller.start(command)
         self.examChanged.emit()
 
-    def _resolve_exam_courses(self, course_key_str: str = "") -> list[dict]:
-        key = str(course_key_str or "").strip()
-        if not key:
+    def _resolve_exam_courses(self, course_keys="") -> list[dict]:
+        if course_keys == "":
             return []
+        if isinstance(course_keys, str):
+            keys = course_keys.split(",")
+        elif isinstance(course_keys, (list, tuple, set)) and all(isinstance(key, str) for key in course_keys):
+            keys = course_keys
+        else:
+            raise ValueError("课程选择格式无效，请重新选择课程。")
+        wanted = {key.strip() for key in keys}
+        if not wanted or "" in wanted:
+            raise ValueError("请至少选择一门有效课程。")
+        missing = set(wanted)
+        matched = []
         for c in self.courses:
             cid = str(c.get("courseId") or "").strip()
             clazz_id = str(c.get("clazzId") or "").strip()
-            if f"{cid}:{clazz_id}" == key or cid == key:
-                return [dict(c)]
-        raise ValueError("未找到指定的课程，请先点击「读取课程」刷新课程列表。")
+            matches = wanted.intersection((f"{cid}:{clazz_id}", cid))
+            if matches:
+                matched.append(dict(c))
+                missing.difference_update(matches)
+        if missing:
+            raise ValueError("部分所选课程已失效，请点击「读取课程」刷新课程列表后重新选择。")
+        return matched
 
-    def loadExams(self, course_key=""):
+    def loadExams(self, course_keys=""):
         def run():
             if self._exam_controller.active:
                 raise ValueError("正在执行考试操作，请稍候。")
-            target_courses = self._resolve_exam_courses(course_key)
+            target_courses = self._resolve_exam_courses(course_keys)
             extra = {"courses": target_courses} if target_courses else {}
             self._start_exam_worker("exam_list", **extra)
-            label = target_courses[0].get("title", "") if target_courses else "全部课程"
-            self._exam_notify(f"正在读取「{label}」的考试安排…", "info")
+            if len(target_courses) == 1:
+                scope = f"「{target_courses[0].get('title', '')}」"
+            elif target_courses:
+                scope = f"所选 {len(target_courses)} 门课程"
+            else:
+                scope = "全部课程"
+            self._exam_notify(f"正在读取{scope}的考试安排…", "info")
         return self.execute(run)
 
     def openExam(self, exam_id, confirmed=False):
@@ -3338,15 +3357,20 @@ class WorkbenchBackend(QObject):
             "feedback": dict(self._homework_feedback),
         }
 
-    def loadHomeworks(self, course_key=""):
+    def loadHomeworks(self, course_keys=""):
         def run():
             if self._exam_controller.active:
                 raise ValueError("正在执行考试或作业后台操作，请稍候。")
-            target_courses = self._resolve_exam_courses(course_key)
+            target_courses = self._resolve_exam_courses(course_keys)
             extra = {"courses": target_courses} if target_courses else {}
             self._start_exam_worker("homework_list", **extra)
-            label = target_courses[0].get("title", "") if target_courses else "全部课程"
-            self._homework_notify(f"正在读取「{label}」的作业列表…", "info")
+            if len(target_courses) == 1:
+                scope = f"「{target_courses[0].get('title', '')}」"
+            elif target_courses:
+                scope = f"所选 {len(target_courses)} 门课程"
+            else:
+                scope = "全部课程"
+            self._homework_notify(f"正在读取{scope}的作业列表…", "info")
         return self.execute(run)
 
     def loadHomework(self, url=""):

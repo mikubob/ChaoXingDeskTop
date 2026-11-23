@@ -10,7 +10,7 @@ from PySide6.QtCore import QCoreApplication, QTimer
 
 from .workbench_backend import WorkbenchBackend
 from .instance import InstanceGuard
-from .config import data_dir
+from .config import course_key, data_dir
 from .image_cache import clear_stale_image_cache
 
 
@@ -95,7 +95,8 @@ class Bridge:
             elif name == "courses":
                 state["courses"] = b.courseRows
                 state["courseChoices"] = [
-                    {key: course.get(key, "") for key in ("courseId", "clazzId", "title")}
+                    dict(courseId=course["courseId"], clazzId=course["clazzId"], title=course.get("title", ""),
+                         selected=course_key(course) in b.selected)
                     for course in b.courses
                 ]
             elif name == "draft":
