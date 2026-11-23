@@ -215,6 +215,8 @@ public sealed partial class MainWindow : Window
 
             Navigation.SelectedIndex = 5;
             await WaitFor(() => examCourseCombo?.Items.Count == demoCourses + 1);
+            if (SelectedCourseKey(examCourseCombo).Length == 0)
+                throw new InvalidOperationException("读取演示课程后未默认选择单门课程。");
             examCourseCombo!.SelectedIndex = 1;
             string examCourseKey = SelectedCourseKey(examCourseCombo);
             await backend.Call("loadExams", [examCourseKey]);

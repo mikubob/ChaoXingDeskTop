@@ -247,8 +247,8 @@ public sealed partial class MainWindow
         string sig = string.Join("|", courses.Select(c => $"{J.S(c, "courseId")}:{J.S(c, "clazzId")}:{J.S(c, "title")}"));
         if (sig == lastSignature && combo.Items.Count > 0) return;
         lastSignature = sig;
-        bool hadSelection = combo.SelectedItem is ComboBoxItem;
         string prevKey = SelectedCourseKey(combo);
+        bool keepAllCourses = combo.Items.Count > 1 && combo.SelectedItem is ComboBoxItem && prevKey.Length == 0;
         combo.Items.Clear();
         int restoreIdx = -1;
         for (int i = 0; i < courses.Count; i++)
@@ -262,7 +262,7 @@ public sealed partial class MainWindow
             if (key == prevKey) restoreIdx = i;
         }
         combo.Items.Add(new ComboBoxItem { Content = "全部课程（较慢，易触发限流）", Tag = "" });
-        if (hadSelection && prevKey.Length == 0)
+        if (keepAllCourses)
             restoreIdx = combo.Items.Count - 1;
         if (restoreIdx >= 0)
             combo.SelectedIndex = restoreIdx;
