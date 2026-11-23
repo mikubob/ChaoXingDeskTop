@@ -2887,12 +2887,29 @@ class WorkbenchBackend(QObject):
     def on_exam_event(self, event):
         if event.get("run_id", self._exam_controller.run_id) != self._exam_controller.run_id:
             return
+        kind = event.get("type")
+        if kind == "session_ready":
+            # worker 登录后会刷新并写回 Cookie，需同步更新本轮考试／作业的 cookie_mtime_ns 快照
+            try:
+                snap = self._exam_identity_snapshot()
+            except OSError:
+                return
+            if (
+                self._exam_identity is not None
+                and len(snap) == 4
+                and snap[0] == "real"
+                and self._exam_identity[:3] == snap[:3]
+                and snap[1] == event.get("account_id")
+                and snap[2] == event.get("uid")
+                and snap[3] == event.get("cookie_mtime_ns")
+            ):
+                self._exam_identity = snap
+            return
         try:
             if self._exam_identity is not None and self._exam_identity_snapshot() != self._exam_identity:
                 return
         except OSError:
             return
-        kind = event.get("type")
         if kind == "log":
             self.append_log(event.get("message", ""), event.get("level", "INFO"))
             return
@@ -3201,16 +3218,21 @@ class WorkbenchBackend(QObject):
         self._exam_outcome = False
         if op == "exam_submit" and not outcome:
             self.__settle_unfinished_submit()
-        elif not outcome and code != 0:
-            if op.startswith("homework_"):
-                if self._exam_controller.stopping:
-                    self._homework_notify("已取消当前参考答案获取，已填入的本机答案保留。", "warning")
+        elif not outcome:
+            if code != 0:
+                if op.startswith("homework_"):
+                    if self._exam_controller.stopping:
+                        self._homework_notify("已取消当前参考答案获取，已填入的本机答案保留。", "warning")
+                    else:
+                        self._homework_notify(f"作业后台异常退出（{code}），请重试或检查日志。", "danger")
+                elif self._exam_controller.stopping:
+                    self._exam_notify("已取消当前考试操作，已填入的本机答案保留。", "warning")
                 else:
-                    self._homework_notify(f"作业后台异常退出（{code}），请重试或检查日志。", "danger")
-            elif self._exam_controller.stopping:
-                self._exam_notify("已取消当前考试操作，已填入的本机答案保留。", "warning")
-            else:
-                self._exam_notify(f"考试后台异常退出（{code}），请重试或检查日志。", "danger")
+                    self._exam_notify(f"考试后台异常退出（{code}），请重试或检查日志。", "danger")
+            elif op.startswith("homework_"):
+                self._homework_notify("作业后台已结束，但未收到有效结果，请重试。", "warning")
+            elif op.startswith("exam_"):
+                self._exam_notify("考试后台已结束，但未收到有效结果，请重试。", "warning")
         self.examChanged.emit()
         self.homeworkChanged.emit()
 

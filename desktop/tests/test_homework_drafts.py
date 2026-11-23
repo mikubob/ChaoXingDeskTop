@@ -205,6 +205,64 @@ class HomeworkDraftsTests(unittest.TestCase):
         self.assertFalse(items[1]["canOpen"])
         self.assertEqual(items[1]["status"], "submitted")
 
+    def test_exam_event_updates_identity_on_session_ready_and_clears_unfinished_state(self) -> None:
+        import os
+        import tempfile
+        from chaoxing_desktop.accounts import AccountStore
+        from chaoxing_desktop.workbench_backend import WorkbenchBackend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_env = os.environ.get("CHAOXING_DESKTOP_DATA")
+            os.environ["CHAOXING_DESKTOP_DATA"] = tmp
+            try:
+                backend = WorkbenchBackend(lambda *_a: None)
+                store = AccountStore(Path(tmp))
+                row = store.add(username="13800138000", label="测试号")
+                store.update(row["id"], uid="123456")
+                cookie_file = store.cookie_path(row["id"])
+                cookie_file.parent.mkdir(parents=True, exist_ok=True)
+                cookie_file.write_text("{}", encoding="utf-8")
+                old_mtime = cookie_file.stat().st_mtime_ns
+
+                backend.account_store = store
+                backend._exam_operation = "homework_list"
+                backend._exam_outcome = False
+                backend._exam_identity = ("real", row["id"], "123456", old_mtime)
+
+                # 模拟 worker.py 中 save_cookies() 刷新 cookie 文件 mtime
+                os.utime(cookie_file, ns=(old_mtime + 1_000_000, old_mtime + 1_000_000))
+                new_mtime = cookie_file.stat().st_mtime_ns
+                backend.on_exam_event({
+                    "type": "session_ready",
+                    "account_id": row["id"],
+                    "uid": "123456",
+                    "cookie_mtime_ns": new_mtime,
+                })
+                backend.on_exam_event({
+                    "type": "homework_list",
+                    "demo": False,
+                    "homeworks": [{
+                        "workId": "w1", "courseId": "c1", "clazzId": "cl1",
+                        "courseTitle": "课程", "title": "作业1", "status": "todo",
+                        "statusText": "未交", "timeText": "", "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=w1",
+                        "canOpen": True, "reason": "",
+                    }],
+                })
+                self.assertEqual(len(backend._homework_list), 1)
+                self.assertTrue(backend._exam_outcome)
+
+                # 若未收到结果且退出码为 0，不能一直停留在「正在读取」
+                backend._exam_operation = "exam_list"
+                backend._exam_outcome = False
+                backend.on_exam_finished(0)
+                self.assertEqual(backend._exam_feedback["tone"], "warning")
+                self.assertIn("未收到有效结果", backend._exam_feedback["message"])
+            finally:
+                if old_env is None:
+                    os.environ.pop("CHAOXING_DESKTOP_DATA", None)
+                else:
+                    os.environ["CHAOXING_DESKTOP_DATA"] = old_env
+
 
 if __name__ == "__main__":
     unittest.main()
