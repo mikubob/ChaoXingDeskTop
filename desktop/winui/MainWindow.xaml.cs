@@ -214,6 +214,13 @@ public sealed partial class MainWindow : Window
             await WaitFor(() => resultLists["questions"].Items.Count == demoCourses);
 
             Navigation.SelectedIndex = 5;
+            await WaitFor(() => examCourseCombo?.Items.Count == demoCourses + 1);
+            examCourseCombo!.SelectedIndex = 1;
+            string examCourseKey = SelectedCourseKey(examCourseCombo);
+            await backend.Call("loadExams", [examCourseKey]);
+            await WaitFor(() => !J.B(backend.State["exam"], "busy") &&
+                J.A(backend.State["exam"]?["list"]).SingleOrDefault() is JsonObject listedExam &&
+                $"{J.S(listedExam, "courseId")}:{J.S(listedExam, "clazzId")}" == examCourseKey);
             await backend.Call("loadExams");
             await WaitFor(() => !J.B(backend.State["exam"], "busy") && J.A(backend.State["exam"]?["list"]).Count() == 4);
             var openableExam = J.A(backend.State["exam"]?["list"]).FirstOrDefault(item => J.B(item, "nativeSupported"))
@@ -258,6 +265,14 @@ public sealed partial class MainWindow : Window
 
             await backend.Call("closeExam", [false]);
             SwitchExamMode(true);
+            await WaitFor(() => hwCourseCombo?.Items.Count == demoCourses + 1);
+            hwCourseCombo!.SelectedIndex = 0;
+            string homeworkCourseKey = SelectedCourseKey(hwCourseCombo);
+            await backend.Call("loadHomeworks", [homeworkCourseKey]);
+            await WaitFor(() => !J.B(backend.State["homework"], "busy") &&
+                J.A(backend.State["homework"]?["list"]).Count() == 2 &&
+                J.A(backend.State["homework"]?["list"]).All(item =>
+                    $"{J.S(item, "courseId")}:{J.S(item, "clazzId")}" == homeworkCourseKey));
             await backend.Call("loadHomework", [""]);
             await WaitFor(() => showingHomeworkEditor && !J.B(backend.State["homework"], "busy"));
             var homework = backend.State["homework"]?["current"];
@@ -307,7 +322,12 @@ public sealed partial class MainWindow : Window
             SaveButton.IsEnabled = !Busy;
             foreach (var control in idleControls) control.IsEnabled = !Busy;
             foreach (var refresh in refreshers) refresh();
-            if (update.ContainsKey("courses")) RefreshCourses();
+            if (update.ContainsKey("courses"))
+            {
+                RefreshCourses();
+                RefreshExam();
+                RefreshHomework();
+            }
             foreach (var pair in resultLists)
                 if (update.ContainsKey(pair.Key)) RefreshRecords(pair.Key, pair.Value);
             if (update.ContainsKey("logs")) SyncLogs();

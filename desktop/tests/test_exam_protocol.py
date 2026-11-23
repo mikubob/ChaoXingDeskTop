@@ -18,6 +18,7 @@ for p in (str(DESKTOP_DIR), str(VENDOR_DIR)):
         sys.path.insert(0, p)
 
 from api.exam import ExamAdapter, trusted_url  # noqa: E402
+from api.homework import HomeworkAdapter  # noqa: E402
 from api.responses import PlatformResponseError  # noqa: E402
 
 
@@ -42,6 +43,29 @@ def _mock_response(text: str = "", *, status_code: int = 200, url: str = "https:
 class ExamProtocolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.adapter = ExamAdapter()
+
+    def test_throttled_read_retries_only_for_lists(self):
+        url = "https://mooc1.chaoxing.com/demo"
+        for adapter in (ExamAdapter(), HomeworkAdapter()):
+            with self.subTest(adapter=type(adapter).__name__):
+                session = MagicMock()
+                session.get.side_effect = [
+                    _mock_response(status_code=202, url=url),
+                    _mock_response("<p>列表</p>", url=url),
+                ]
+                with self.assertRaises(PlatformResponseError):
+                    adapter.read(session, url)
+                self.assertEqual(session.get.call_count, 1)
+
+                session.reset_mock()
+                session.get.side_effect = [
+                    _mock_response(status_code=429, url=url),
+                    _mock_response("<p>列表</p>", url=url),
+                ]
+                with patch(f"{type(adapter).__module__}.time.sleep") as wait:
+                    self.assertEqual(adapter.read(session, url, retry_throttled=True), ("<p>列表</p>", url))
+                self.assertEqual(session.get.call_count, 2)
+                wait.assert_called_once_with(2.0)
 
     def test_proctoring_checks_each_flag_and_receipt_requires_result(self):
         notes = _read_fixture("examnotes_ok.html").replace(

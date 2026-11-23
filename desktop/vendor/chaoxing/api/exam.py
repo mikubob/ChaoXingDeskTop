@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import re
+import time
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
@@ -275,10 +276,13 @@ def _parse_single_question(q_node, index: int, base_url: str) -> tuple[dict, dic
 class ExamAdapter:
     """超星独立考试协议适配器。"""
 
-    def read(self, session: requests.Session, url: str, params: dict | None = None) -> tuple[str, str]:
+    def read(self, session: requests.Session, url: str, params: dict | None = None, *,
+             retry_throttled: bool = False) -> tuple[str, str]:
         """沿受信重定向链执行只读 GET，拒绝非白名单跳转并识别会话失效。"""
         current = trusted_url(url)
-        for _ in range(6):
+        throttled = 0
+        redirects = 0
+        while redirects < 6:
             response = session.get(
                 current,
                 params=params,
@@ -286,6 +290,16 @@ class ExamAdapter:
                 timeout=20,
                 headers={"Referer": "https://mooc1.chaoxing.com/"},
             )
+            if retry_throttled and response.status_code in (202, 429):
+                response.close()
+                if throttled < 3:
+                    throttled += 1
+                    time.sleep(2.0 * (2 ** (throttled - 1)))
+                    continue
+                raise PlatformResponseError(
+                    f"平台请求过于频繁（HTTP {response.status_code}），请等待约 30 秒后再重试。",
+                    "rate_limited",
+                )
             params = None
             if response.status_code in (301, 302, 303, 307, 308):
                 location = response.headers.get("Location", "")
@@ -294,6 +308,7 @@ class ExamAdapter:
                 if urlsplit(destination).hostname == "passport2.chaoxing.com":
                     raise PlatformResponseError("考试会话已失效，请重新登录。", "auth_error")
                 current = trusted_url(destination)
+                redirects += 1
                 continue
             try:
                 return checked_page(response, "cards"), trusted_url(str(response.url or current))
@@ -305,7 +320,9 @@ class ExamAdapter:
         """按课程读取考试安排列表，返回标准化考试条目。"""
         exams: list[dict] = []
         seen_keys: set[tuple[str, str, str]] = set()
-        for course in courses:
+        for idx, course in enumerate(courses):
+            if idx > 0:
+                time.sleep(0.3)
             cid = str(course.get("courseId") or "").strip()
             clazz_id = str(course.get("clazzId") or "").strip()
             cpi = str(course.get("cpi") or "").strip()
@@ -316,6 +333,7 @@ class ExamAdapter:
                 session,
                 COURSE_MIDDLE_URL,
                 params={"courseid": cid, "clazzid": clazz_id, "cpi": cpi, "ismooc2": "1", "v": "2"},
+                retry_throttled=True,
             )
             mid_soup = BeautifulSoup(mid_text, "lxml")
             exam_enc = _hidden_value(mid_soup, "examEnc")
@@ -335,6 +353,7 @@ class ExamAdapter:
                     "enc": exam_enc,
                     "openc": openc,
                 },
+                retry_throttled=True,
             )
             if "参数传递不正确" in list_text or "没有此页面访问权限" in list_text:
                 continue

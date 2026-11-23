@@ -18,10 +18,12 @@ public sealed partial class MainWindow
 
     // 独立作业列表视图
     private TextBox? hwUrlInput;
+    private ComboBox? hwCourseCombo;
     private Button? hwLoadButton, hwFetchListButton;
     private InfoBar? hwListNotice;
     private TextBlock? hwEmptyText, hwDraftsHeader, hwRemoteHeader;
     private StackPanel? hwDraftListContainer, hwRemoteListContainer;
+    private string hwCourseSignature = "";
 
     // 独立作业草稿编辑器
     private Button? hwBackButton, hwPrevButton, hwNextButton, hwSaveButton, hwSavePlatformButton, hwCopyButton, hwExportButton;
@@ -48,17 +50,20 @@ public sealed partial class MainWindow
         };
         AutomationProperties.SetName(hwUrlInput, "独立作业链接");
         hwLoadButton = Button("读取作业", async () => await Call("loadHomework", hwUrlInput.Text), color: "#2563EB");
-        hwFetchListButton = Button("读取账号作业", async () => await Call("loadHomeworks"));
+        hwCourseCombo = new ComboBox { MinWidth = 220, MaxWidth = 340 };
+        AutomationProperties.SetName(hwCourseCombo, "选择课程");
+        hwFetchListButton = Button("读取课程作业", async () => await Call("loadHomeworks", SelectedCourseKey(hwCourseCombo)));
 
         var urlGrid = new Grid { ColumnSpacing = 10 };
         urlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         urlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        urlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         urlGrid.Children.Add(hwUrlInput);
         urlGrid.Children.Add(hwLoadButton);
-        urlGrid.Children.Add(hwFetchListButton);
         Grid.SetColumn(hwLoadButton, 1);
-        Grid.SetColumn(hwFetchListButton, 2);
+
+        var courseRow = StretchRow(Text("按课程读取作业列表，或直接粘贴上方作业链接：", 13, true), Row(hwCourseCombo, hwFetchListButton));
+        var topControls = Column(urlGrid, courseRow);
+        topControls.Spacing = 8;
 
         hwListNotice = new InfoBar { IsOpen = false, IsClosable = false };
         hwDraftsHeader = Text("本机草稿", 14);
@@ -69,7 +74,7 @@ public sealed partial class MainWindow
         hwRemoteHeader.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
         hwRemoteHeader.Visibility = Visibility.Collapsed;
         hwRemoteListContainer = Column();
-        hwEmptyText = Text("暂无作业或本机草稿。点击「读取账号作业」或粘贴作业链接并点击「读取作业」（仅保存在本机，不向平台提交）。", 14, true);
+        hwEmptyText = Text("暂无作业或本机草稿。选择课程读取列表，或通过作业链接读取。", 14, true);
         hwEmptyText.HorizontalAlignment = HorizontalAlignment.Center;
         hwEmptyText.Margin = new Thickness(0, 32, 0, 0);
 
@@ -83,7 +88,7 @@ public sealed partial class MainWindow
         listView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         listView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         listView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        listView.Children.Add(urlGrid);
+        listView.Children.Add(topControls);
         listView.Children.Add(hwListNotice);
         listView.Children.Add(listBody);
         Grid.SetRow(hwListNotice, 1);
@@ -233,6 +238,8 @@ public sealed partial class MainWindow
         if (homeworkHost == null) return;
         var hw = backend.State["homework"] as JsonObject ?? new JsonObject();
         bool busy = J.B(hw, "busy");
+        SyncCourseCombo(hwCourseCombo, ref hwCourseSignature);
+        if (hwCourseCombo != null) hwCourseCombo.IsEnabled = !busy;
         if (hwLoadButton != null) hwLoadButton.IsEnabled = !busy;
         if (hwFetchListButton != null) hwFetchListButton.IsEnabled = !busy;
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
@@ -325,9 +326,12 @@ def _parse_mooc2_question(q_node: Tag, index: int, base_url: str) -> tuple[dict,
 class HomeworkAdapter:
     """超星独立作业只读解析适配器。"""
 
-    def read(self, session: requests.Session, url: str, params: dict | None = None) -> tuple[str, str]:
+    def read(self, session: requests.Session, url: str, params: dict | None = None, *,
+             retry_throttled: bool = False) -> tuple[str, str]:
         current = _trusted_chaoxing_url(url)
-        for _ in range(6):
+        throttled = 0
+        redirects = 0
+        while redirects < 6:
             response = session.get(
                 current,
                 params=params,
@@ -335,6 +339,16 @@ class HomeworkAdapter:
                 timeout=20,
                 headers={"Referer": "https://mooc1.chaoxing.com/"},
             )
+            if retry_throttled and response.status_code in (202, 429):
+                response.close()
+                if throttled < 3:
+                    throttled += 1
+                    time.sleep(2.0 * (2 ** (throttled - 1)))
+                    continue
+                raise PlatformResponseError(
+                    f"平台请求过于频繁（HTTP {response.status_code}），请等待约 30 秒后再重试。",
+                    "rate_limited",
+                )
             params = None
             if response.status_code in (301, 302, 303, 307, 308):
                 dest = urljoin(current, response.headers.get("Location", ""))
@@ -342,6 +356,7 @@ class HomeworkAdapter:
                 if urlsplit(dest).hostname == "passport2.chaoxing.com":
                     raise PlatformResponseError("作业会话已失效，请重新登录。", "auth_error")
                 current = _trusted_chaoxing_url(dest)
+                redirects += 1
                 continue
             try:
                 return checked_page(response, "cards"), _trusted_chaoxing_url(str(response.url or current))
@@ -353,7 +368,9 @@ class HomeworkAdapter:
         """按课程读取账号的独立作业列表，返回标准化作业条目。"""
         works: list[dict] = []
         seen_keys: set[tuple[str, str, str]] = set()
-        for course in courses:
+        for idx, course in enumerate(courses):
+            if idx > 0:
+                time.sleep(0.3)
             cid = str(course.get("courseId") or "").strip()
             clazz_id = str(course.get("clazzId") or "").strip()
             cpi = str(course.get("cpi") or "").strip()
@@ -364,6 +381,7 @@ class HomeworkAdapter:
                 session,
                 COURSE_MIDDLE_URL,
                 params={"courseid": cid, "clazzid": clazz_id, "cpi": cpi, "ismooc2": "1", "v": "2"},
+                retry_throttled=True,
             )
             mid_soup = BeautifulSoup(mid_text, "lxml")
             work_enc = _hidden_val(mid_soup, "workEnc")
@@ -386,6 +404,7 @@ class HomeworkAdapter:
                     "stuenc": stu_enc,
                     "isdisplaytable": "2",
                 },
+                retry_throttled=True,
             )
             if "参数传递不正确" in list_text or "没有此页面访问权限" in list_text or "无权限" in list_text:
                 continue

@@ -17,8 +17,10 @@ public sealed partial class MainWindow
     // 考试列表视图控件
     private TextBlock? examAccountLabel, examEmptyText;
     private InfoBar? examListNotice;
+    private ComboBox? examCourseCombo;
     private Button? examRefreshButton;
     private StackPanel? examListContainer;
+    private string examCourseSignature = "";
 
     // 答题视图控件
     private Button? examBackButton, examPrevButton, examNextButton, examSaveButton, examSavePlatformButton, examVerifyButton, examSubmitButton;
@@ -48,8 +50,10 @@ public sealed partial class MainWindow
     {
         // 所有考试页控件都不加入 idleControls，保证刷课运行时仍可独立操作考试。
         examAccountLabel = Text("当前账号：尚未选择", 13, true);
-        examRefreshButton = Button("读取考试", async () => await Call("loadExams"), color: "#2563EB");
-        var listHeader = StretchRow(examAccountLabel, examRefreshButton);
+        examCourseCombo = new ComboBox { MinWidth = 220, MaxWidth = 340 };
+        AutomationProperties.SetName(examCourseCombo, "选择课程");
+        examRefreshButton = Button("读取考试", async () => await Call("loadExams", SelectedCourseKey(examCourseCombo)), color: "#2563EB");
+        var listHeader = StretchRow(examAccountLabel, Row(examCourseCombo, examRefreshButton));
 
         examListNotice = new InfoBar { IsOpen = false, IsClosable = false };
         examListContainer = Column();
@@ -236,11 +240,50 @@ public sealed partial class MainWindow
         SwitchContent(examHost, examViews, showEditor ? 1 : 0, showEditor ? -distance : distance, animate);
     }
 
+    private void SyncCourseCombo(ComboBox? combo, ref string lastSignature)
+    {
+        if (combo == null) return;
+        var courses = J.A(backend.State["courseChoices"]).OfType<JsonObject>().ToList();
+        string sig = string.Join("|", courses.Select(c => $"{J.S(c, "courseId")}:{J.S(c, "clazzId")}:{J.S(c, "title")}"));
+        if (sig == lastSignature && combo.Items.Count > 0) return;
+        lastSignature = sig;
+        bool hadSelection = combo.SelectedItem is ComboBoxItem;
+        string prevKey = SelectedCourseKey(combo);
+        combo.Items.Clear();
+        int restoreIdx = -1;
+        for (int i = 0; i < courses.Count; i++)
+        {
+            var c = courses[i];
+            string cid = J.S(c, "courseId");
+            string clazzId = J.S(c, "clazzId");
+            string title = J.S(c, "title");
+            string key = $"{cid}:{clazzId}";
+            combo.Items.Add(new ComboBoxItem { Content = string.IsNullOrWhiteSpace(title) ? cid : title, Tag = key });
+            if (key == prevKey) restoreIdx = i;
+        }
+        combo.Items.Add(new ComboBoxItem { Content = "全部课程（较慢，易触发限流）", Tag = "" });
+        if (hadSelection && prevKey.Length == 0)
+            restoreIdx = combo.Items.Count - 1;
+        if (restoreIdx >= 0)
+            combo.SelectedIndex = restoreIdx;
+        else
+            combo.SelectedIndex = 0;
+    }
+
+    private static string SelectedCourseKey(ComboBox? combo)
+    {
+        if (combo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+            return tag;
+        return "";
+    }
+
     private void RefreshExam()
     {
         if (examHost == null) return;
         var exam = backend.State["exam"] as JsonObject ?? new JsonObject();
         bool busy = J.B(exam, "busy");
+        SyncCourseCombo(examCourseCombo, ref examCourseSignature);
+        if (examCourseCombo != null) examCourseCombo.IsEnabled = !busy;
         if (examRefreshButton != null) examRefreshButton.IsEnabled = !busy;
 
         if (examAccountLabel != null)

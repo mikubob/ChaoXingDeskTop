@@ -94,6 +94,10 @@ class Bridge:
                              aiWarning=b.aiWarning, aiUsage=summary["aiUsage"], draftEditable=b.draftEditable)
             elif name == "courses":
                 state["courses"] = b.courseRows
+                state["courseChoices"] = [
+                    {key: course.get(key, "") for key in ("courseId", "clazzId", "title")}
+                    for course in b.courses
+                ]
             elif name == "draft":
                 state.update(draftFeedback=b.draftFeedback, draftDirty=b.draftDirty,
                              draftFeedbackTone=b.draftFeedbackTone)

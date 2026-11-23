@@ -181,12 +181,20 @@ def demo_exam_list() -> list[dict]:
     ]
 
 
+def demo_course_items(items, courses):
+    if not courses:
+        return items
+    keys = {course_key(course) for course in courses}
+    return [item for item in items if course_key(item) in keys]
+
+
 def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_event="exam_assist_done"):
     from datetime import datetime, timedelta, timezone
     action = command["action"]
     if action == "exam_list":
         controlled_wait(channel, 0.1)
-        channel.send("exam_list", exams=demo_exam_list(), demo=True)
+        exams = demo_course_items(demo_exam_list(), command.get("courses"))
+        channel.send("exam_list", exams=exams, demo=True)
         return
     if action == "exam_open":
         exam_id = str(command.get("exam_id") or "demo-exam-101")
@@ -436,38 +444,35 @@ def demo_exam(channel, command, *, suggestion_event="exam_suggestion", done_even
 def demo_homework(channel, command):
     action = command["action"]
     if action == "homework_list":
-        channel.send(
-            "homework_list",
-            demo=True,
-            homeworks=[
-                {
-                    "workId": "demo-work-101",
-                    "courseId": "demo-course-1",
-                    "clazzId": "demo-clazz-1",
-                    "courseTitle": "数据结构与算法（演示）",
-                    "title": "第三次课后作业：二叉树与图",
-                    "status": "todo",
-                    "statusText": "未交",
-                    "timeText": "剩余 48 小时",
-                    "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?courseId=demo-course-1&workId=demo-work-101",
-                    "canOpen": True,
-                    "reason": "",
-                },
-                {
-                    "workId": "demo-work-102",
-                    "courseId": "demo-course-1",
-                    "clazzId": "demo-clazz-1",
-                    "courseTitle": "数据结构与算法（演示）",
-                    "title": "第二次课后作业：栈与队列",
-                    "status": "submitted",
-                    "statusText": "待批阅",
-                    "timeText": "",
-                    "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?courseId=demo-course-1&workId=demo-work-102",
-                    "canOpen": False,
-                    "reason": "当前状态为「待批阅」，请在官方入口查看。",
-                },
-            ],
-        )
+        homeworks = [
+            {
+                "workId": "demo-work-101",
+                "courseId": "demo-101",
+                "clazzId": "01",
+                "courseTitle": "Python 程序设计 · 演示",
+                "title": "第三次课后作业：二叉树与图",
+                "status": "todo",
+                "statusText": "未交",
+                "timeText": "剩余 48 小时",
+                "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork?courseId=demo-101&workId=demo-work-101",
+                "canOpen": True,
+                "reason": "",
+            },
+            {
+                "workId": "demo-work-102",
+                "courseId": "demo-101",
+                "clazzId": "01",
+                "courseTitle": "Python 程序设计 · 演示",
+                "title": "第二次课后作业：栈与队列",
+                "status": "submitted",
+                "statusText": "待批阅",
+                "timeText": "",
+                "workUrl": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?courseId=demo-101&workId=demo-work-102",
+                "canOpen": False,
+                "reason": "当前状态为「待批阅」，请在官方入口查看。",
+            },
+        ]
+        channel.send("homework_list", demo=True, homeworks=demo_course_items(homeworks, command.get("courses")))
         return
     if action == "homework_load":
         image_uris = []
@@ -969,7 +974,11 @@ def real_exam_action(channel, command, cx, session):
     action = command["action"]
     adapter = ExamAdapter()
     if action == "exam_list":
-        courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
+        selected = command.get("courses")
+        if isinstance(selected, list) and selected:
+            courses = selected
+        else:
+            courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
         exams = adapter.list_exams(session, courses)
         channel.send("exam_list", exams=exams, demo=False)
         return
@@ -1055,7 +1064,11 @@ def real_exam_action(channel, command, cx, session):
 
     if action == "homework_list":
         from api.homework import HomeworkAdapter
-        courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
+        selected = command.get("courses")
+        if isinstance(selected, list) and selected:
+            courses = selected
+        else:
+            courses = list({(str(c["courseId"]), str(c["clazzId"])): c for c in cx.get_course_list()}.values())
         works = HomeworkAdapter().list_homeworks(session, courses)
         channel.send("homework_list", homeworks=works, demo=False)
         return
